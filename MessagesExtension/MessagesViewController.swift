@@ -15,6 +15,14 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
 
+        #if DEBUG
+        // Assert the live switch actually took: a green mock can hide the fact
+        // that we never flipped to the real backend.
+        log.info("CONFIG: useMock=\(Config.useMock) baseURL=\(Config.baseURL.absoluteString)")
+        // Non-blocking catalog drift check against GET /voices.
+        VoiceCatalogPreflight.run()
+        #endif
+
         viewModel.onDismiss = { [weak self] in
             self?.requestPresentationStyle(.compact)
         }

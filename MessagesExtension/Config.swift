@@ -14,13 +14,19 @@ enum Config {
            let url = URL(string: host) {
             return url
         }
-        #if DEBUG
-        return URL(string: "https://dev.example.com")!
-        #else
-        return URL(string: "https://api.example.com")!
-        #endif
+        // Code fallback: the live HTTPS origin (Cloudflare tunnel). The
+        // Info.plist `API_BASE_URL` (driven by Debug/Release build settings)
+        // overrides this when set.
+        //
+        // ATS: the production origin is HTTPS, so no App Transport Security
+        // exception is needed (and none is present in either Info.plist). If you
+        // ever point this at a plain-HTTP dev endpoint (e.g. http://localhost),
+        // add a DEBUG-only, EXTENSION-target NSAppTransportSecurity exception —
+        // do NOT ship a blanket NSAllowsArbitraryLoads.
+        return URL(string: "https://voiceapi.awill.co")!
     }()
 
-    /// Orthogonal to environment. Flip to `false` when german's endpoint is live.
-    static let useMock = true
+    /// Orthogonal to environment. `false` = real backend; flip to `true` for
+    /// offline development against the bundled sample.
+    static let useMock = false
 }

@@ -2,40 +2,6 @@ import SwiftUI
 import AVFoundation
 import os
 
-struct VoicePersona: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let monogram: String
-    let color1: Color
-    let color2: Color
-    let uiColor1: UIColor
-    let uiColor2: UIColor
-
-    static let all: [VoicePersona] = [
-        VoicePersona(id: "elder",
-                     name: "The Elder",
-                     monogram: "E",
-                     color1: Color(hex: 0xF7B733),
-                     color2: Color(hex: 0xFC4A1A),
-                     uiColor1: UIColor(hex: 0xF7B733),
-                     uiColor2: UIColor(hex: 0xFC4A1A)),
-        VoicePersona(id: "aria",
-                     name: "Aria",
-                     monogram: "A",
-                     color1: Color(hex: 0xF857A6),
-                     color2: Color(hex: 0x9B5CF6),
-                     uiColor1: UIColor(hex: 0xF857A6),
-                     uiColor2: UIColor(hex: 0x9B5CF6)),
-        VoicePersona(id: "mlk",
-                     name: "M.L.K.",
-                     monogram: "M",
-                     color1: Color(hex: 0x36D1DC),
-                     color2: Color(hex: 0x5B86E5),
-                     uiColor1: UIColor(hex: 0x36D1DC),
-                     uiColor2: UIColor(hex: 0x5B86E5)),
-    ]
-}
-
 @MainActor
 final class VoiceTransformViewModel: NSObject, ObservableObject {
     enum Step {
@@ -73,6 +39,9 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
     private var playbackTimer: Timer?
     private var audioPlayer: AVAudioPlayer?
     private var preparedClip: PreparedClip?
+    /// Last successful recording, retained only after a transient conversion
+    /// failure so the user can retry without re-recording.
+    private var lastRecordedURL: URL?
     private var statusIndex = 0
 
     private let transformStatuses = [
@@ -119,6 +88,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     func goBack() {
         stopPlayback()
+        lastRecordedURL = nil
         switch step {
         case .persona:
             cancel()
@@ -141,12 +111,21 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     func recordButtonTapped() {
-        isRecording ? stopAndConvert() : beginRecording()
+        if isRecording {
+            stopAndConvert()
+        } else if let retryURL = lastRecordedURL {
+            // Retry the previous recording after a transient failure.
+            lastRecordedURL = nil
+            startConversion(from: retryURL)
+        } else {
+            beginRecording()
+        }
     }
 
     func redo() {
         stopPlayback()
         preparedClip = nil
+        lastRecordedURL = nil
         step = .record
         statusLine = "Tap to record"
         seedWaveform()
@@ -277,15 +256,53 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
             } catch {
                 self.log.error("CONVERT: failed \(String(describing: error))")
                 self.stopStatusTimer()
-                self.step = .record
-                self.statusLine = "Convert failed"
+                self.handleConversionFailure(error, recordedURL: recordedURL)
                 self.conversionTask = nil
             }
         }
     }
 
+    /// Maps a `ConvertServiceError` to distinct user-visible copy. On transient
+    /// failures (502 / network) we KEEP the selected persona and the recorded
+    /// clip so the user can retry by tapping record again, rather than being
+    /// dropped silently back to an empty record screen.
+    private func handleConversionFailure(_ error: Error, recordedURL: URL) {
+        let transient: Bool
+        switch error {
+        case ConvertServiceError.httpStatus(404, _):
+            statusLine = "Voice unavailable — try another"
+            transient = false
+        case ConvertServiceError.httpStatus(413, _),
+             ConvertServiceError.httpStatus(422, _),
+             ConvertServiceError.fileTooLarge:
+            statusLine = "Recording too long or large"
+            transient = false
+        case ConvertServiceError.httpStatus(502, _),
+             ConvertServiceError.httpStatus(503, _):
+            statusLine = "Voice engine busy — tap to retry"
+            transient = true
+        case ConvertServiceError.network:
+            statusLine = "No connection — tap to retry"
+            transient = true
+        case ConvertServiceError.httpStatus(let code, _):
+            statusLine = "Convert failed (\(code))"
+            transient = false
+        default:
+            statusLine = "Convert failed"
+            transient = false
+        }
+
+        // Always return to the record screen so the user can act on the status.
+        // The persona is never reset here. On transient failures we keep the
+        // last recording around so a retry doesn't require re-recording.
+        lastRecordedURL = transient ? recordedURL : nil
+        step = .record
+    }
+
     private func prepareClip(from recordedURL: URL) async throws -> PreparedClip {
-        let response = try await service.convert(audioURL: recordedURL, voiceId: selectedPersona.id)
+        let response = try await service.convert(audioURL: recordedURL,
+                                                 voiceId: selectedPersona.voiceId,
+                                                 engine: selectedPersona.engine)
         try Task.checkCancellation()
         guard let audioUrl = URL(string: response.audioUrl) else {
             throw ConvertServiceError.invalidAudioURL
@@ -893,22 +910,5 @@ struct NeonWaveformView: View {
     static func rainbowColor(_ t: Double, lightness: Double, saturation: Double, alpha: Double) -> Color {
         let hue = (140 + t * 280).truncatingRemainder(dividingBy: 360) / 360
         return Color(hue: hue, saturation: saturation, brightness: lightness, opacity: alpha)
-    }
-}
-
-private extension Color {
-    init(hex: UInt32) {
-        self.init(red: Double((hex >> 16) & 0xff) / 255,
-                  green: Double((hex >> 8) & 0xff) / 255,
-                  blue: Double(hex & 0xff) / 255)
-    }
-}
-
-private extension UIColor {
-    convenience init(hex: UInt32) {
-        self.init(red: CGFloat((hex >> 16) & 0xff) / 255,
-                  green: CGFloat((hex >> 8) & 0xff) / 255,
-                  blue: CGFloat(hex & 0xff) / 255,
-                  alpha: 1)
     }
 }

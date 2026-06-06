@@ -6,7 +6,13 @@ import Foundation
 /// playback feels real (untransformed) on-device. If the recording can't be
 /// found, it falls back to the bundled sample so the flow never breaks.
 struct MockConvertService: ConvertService {
-    func convert(audioURL: URL, voiceId: String) async throws -> ConvertResponse {
+    func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
+        #if DEBUG
+        // Catch wrong live routing early: a green mock must not mask a
+        // voiceId/engine mismatch that would 422 against the real backend.
+        assert(Self.expectedEngine[voiceId] == engine,
+               "voiceId '\(voiceId)' routed to \(engine.rawValue); expected \(Self.expectedEngine[voiceId]?.rawValue ?? "<unknown voiceId>")")
+        #endif
         // Fake latency so the loading state is real.
         try await Task.sleep(nanoseconds: 1_500_000_000)
         return ConvertResponse(
@@ -40,4 +46,12 @@ struct MockConvertService: ConvertService {
     private func bundledSample() -> URL? {
         Bundle.main.url(forResource: "sample", withExtension: "mp3")
     }
+
+    #if DEBUG
+    /// Known-good voiceId → engine pairings, derived from the catalog so the
+    /// mock asserts the same routing the live service would perform.
+    private static let expectedEngine: [String: VoiceEngine] = Dictionary(
+        uniqueKeysWithValues: VoicePersona.all.map { ($0.voiceId, $0.engine) }
+    )
+    #endif
 }
