@@ -1,4 +1,5 @@
 import SwiftUI
+import AVFoundation
 
 @main
 struct VoiceMixerApp: App {
@@ -10,6 +11,8 @@ struct VoiceMixerApp: App {
 }
 
 struct OnboardingView: View {
+    @State private var micPermission = MicPermissionStatus.current
+
     private let steps: [OnboardingStep] = [
         OnboardingStep(
             symbol: "message.fill",
@@ -61,12 +64,35 @@ struct OnboardingView: View {
                 }
                 .padding(.horizontal, 28)
 
-                Text("That's it — no setup needed here.")
+                MicrophonePermissionRow(
+                    status: micPermission,
+                    enableAction: requestMicrophonePermission
+                )
+                .padding(.horizontal, 28)
+
+                Text("Once microphone is enabled, record and send from Messages.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
                     .padding(.bottom, 40)
             }
             .frame(maxWidth: .infinity)
+        }
+        .onAppear {
+            micPermission = MicPermissionStatus.current
+        }
+    }
+
+    private func requestMicrophonePermission() {
+        let updateStatus: (Bool) -> Void = { _ in
+            Task { @MainActor in
+                micPermission = MicPermissionStatus.current
+            }
+        }
+
+        if #available(iOS 17.0, *) {
+            AVAudioApplication.requestRecordPermission(completionHandler: updateStatus)
+        } else {
+            AVAudioSession.sharedInstance().requestRecordPermission(updateStatus)
         }
     }
 }
@@ -105,5 +131,83 @@ private struct OnboardingRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+    }
+}
+
+private enum MicPermissionStatus {
+    case undetermined
+    case granted
+    case denied
+
+    static var current: MicPermissionStatus {
+        if #available(iOS 17.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted: return .granted
+            case .denied: return .denied
+            case .undetermined: return .undetermined
+            @unknown default: return .undetermined
+            }
+        } else {
+            switch AVAudioSession.sharedInstance().recordPermission {
+            case .granted: return .granted
+            case .denied: return .denied
+            case .undetermined: return .undetermined
+            @unknown default: return .undetermined
+            }
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .undetermined: return "mic.fill"
+        case .granted: return "checkmark.circle.fill"
+        case .denied: return "exclamationmark.circle.fill"
+        }
+    }
+
+    var tint: Color {
+        switch self {
+        case .undetermined: return .accentColor
+        case .granted: return .green
+        case .denied: return .orange
+        }
+    }
+
+    var message: String {
+        switch self {
+        case .undetermined:
+            return "Enable microphone access before recording in Messages."
+        case .granted:
+            return "Microphone enabled"
+        case .denied:
+            return "Enable microphone access in Settings to record."
+        }
+    }
+}
+
+private struct MicrophonePermissionRow: View {
+    let status: MicPermissionStatus
+    let enableAction: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 12) {
+                Image(systemName: status.symbol)
+                    .font(.title3)
+                    .foregroundStyle(status.tint)
+                    .frame(width: 28)
+
+                Text(status.message)
+                    .font(.subheadline)
+                    .foregroundStyle(status == .granted ? .primary : .secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            if status == .undetermined {
+                Button("Enable Microphone", action: enableAction)
+                    .buttonStyle(.borderedProminent)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
