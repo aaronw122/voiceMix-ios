@@ -79,7 +79,13 @@ struct OnboardingView: View {
         }
         .onAppear {
             micPermission = MicPermissionStatus.current
+            requestMicrophonePermissionIfNeeded()
         }
+    }
+
+    private func requestMicrophonePermissionIfNeeded() {
+        guard MicPermissionStatus.current == .undetermined else { return }
+        requestMicrophonePermission()
     }
 
     private func requestMicrophonePermission() {

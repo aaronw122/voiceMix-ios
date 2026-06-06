@@ -32,6 +32,7 @@ final class AudioRecorder: NSObject {
 
         let recorder = try AVAudioRecorder(url: url, settings: settings)
         recorder.delegate = self
+        recorder.isMeteringEnabled = true
         guard recorder.record() else {
             throw RecorderError.failedToStart
         }
@@ -52,6 +53,20 @@ final class AudioRecorder: NSObject {
         // Release the session so other audio (playback bubble) behaves nicely.
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         return url
+    }
+
+    /// Current mic level normalized to 0...1 for the live waveform.
+    func normalizedLevel() -> Double {
+        guard let recorder, recorder.isRecording else { return 0 }
+        recorder.updateMeters()
+        let power = recorder.averagePower(forChannel: 0)
+        guard power.isFinite else { return 0 }
+
+        // AVAudioRecorder reports roughly -80dB...0dB. Bias the curve toward
+        // speech so quiet phrases still produce visible bars.
+        let clamped = Double(min(max(power, -60), 0))
+        let linear = pow(10, clamped / 20)
+        return min(1, max(0.04, pow(linear * 3.2, 0.72)))
     }
 
     enum RecorderError: Error {
@@ -96,20 +111,6 @@ final class AudioRecorder: NSObject {
         }
     }
 
-    /// Explicitly request record permission. The completion is hopped onto the
-    /// main actor so callers can update UI directly. In an iMessage extension
-    /// the implicit prompt from `AVAudioRecorder.record()` often never fires, so
-    /// we must request explicitly before recording.
-    static func requestMicPermission(_ completion: @escaping (Bool) -> Void) {
-        let deliver: (Bool) -> Void = { granted in
-            Task { @MainActor in completion(granted) }
-        }
-        if #available(iOS 17.0, *) {
-            AVAudioApplication.requestRecordPermission(completionHandler: deliver)
-        } else {
-            AVAudioSession.sharedInstance().requestRecordPermission(deliver)
-        }
-    }
 }
 
 extension AudioRecorder: AVAudioRecorderDelegate {}

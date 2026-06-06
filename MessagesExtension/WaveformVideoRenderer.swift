@@ -39,23 +39,27 @@ struct WaveformVideoRenderer {
         static let frameInset: CGFloat = 40
         static let cornerRadius: CGFloat = 28
         static let frameLineWidth: CGFloat = 3
-        static let centerInset: CGFloat = 40
-        static let centerBandYRatio: CGFloat = 0.30
-        static let centerBandHeightRatio: CGFloat = 0.30
-        static let wordmarkYRatio: CGFloat = 0.70
+        static let centerInset: CGFloat = 34
+        static let centerBandYRatio: CGFloat = 0.29
+        static let centerBandHeightRatio: CGFloat = 0.34
+        static let wordmarkYRatio: CGFloat = 0.68
+        static let metaYRatio: CGFloat = 0.80
         static let micPointSize: CGFloat = 200
-        static let wordmarkFontSize: CGFloat = 64
+        static let wordmarkFontSize: CGFloat = 56
+        static let metaFontSize: CGFloat = 24
     }
 
     /// Wrap `audioURL` in an `.mp4` with a static branded cover and return the
     /// new file URL (durable, uniquely named, in caches).
-    func makeVideo(fromAudio audioURL: URL) async throws -> URL {
+    func makeVideo(fromAudio audioURL: URL, personaName: String? = nil) async throws -> URL {
         log.info("RENDER: makeVideo entry")
         do {
             let asset = AVURLAsset(url: audioURL)
             let duration = try await loadDuration(asset)
             try Task.checkCancellation()
-            let cover = await makeBestAvailableCover(for: asset)
+            let cover = await makeBestAvailableCover(for: asset,
+                                                     duration: duration,
+                                                     personaName: personaName)
             try Task.checkCancellation()
             let url = try await renderVideo(audioURL: audioURL,
                                             duration: duration,
@@ -68,15 +72,25 @@ struct WaveformVideoRenderer {
         }
     }
 
+    /// Return the same normalized audio-derived bars used by the MP4 cover so
+    /// the in-extension preview matches the media that gets inserted.
+    func displayBars(fromAudio audioURL: URL) async -> [Double] {
+        let asset = AVURLAsset(url: audioURL)
+        guard let bars = try? await waveformBars(from: asset), !bars.isEmpty else { return [] }
+        return bars.map(Double.init)
+    }
+
     /// Try to draw a real waveform from PCM samples; fall back to the static
     /// mic cover if sample reading fails or yields nothing (never blank).
-    private func makeBestAvailableCover(for asset: AVURLAsset) async -> UIImage {
+    private func makeBestAvailableCover(for asset: AVURLAsset,
+                                        duration: CMTime,
+                                        personaName: String?) async -> UIImage {
         if let bars = try? await waveformBars(from: asset), !bars.isEmpty {
-            return makeCoverImage(centerDraw: { ctx, rect in
+            return makeCoverImage(duration: duration, personaName: personaName, centerDraw: { ctx, rect in
                 drawWaveform(bars: bars, in: rect, context: ctx)
             })
         }
-        return makeCoverImage()
+        return makeCoverImage(duration: duration, personaName: personaName)
     }
 
     // MARK: - Duration
@@ -94,7 +108,9 @@ struct WaveformVideoRenderer {
     /// Build a clean, branded square cover: dark background, centered mic glyph,
     /// and the "voiceMix" wordmark. Subclasses of this concern (the waveform)
     /// override the center by passing a custom drawing block.
-    func makeCoverImage(centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
+    func makeCoverImage(duration: CMTime = .zero,
+                        personaName: String? = nil,
+                        centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: VideoSpec.frameSize)
         return renderer.image { ctx in
             let cg = ctx.cgContext
@@ -105,6 +121,7 @@ struct WaveformVideoRenderer {
             drawInnerFrame(in: inset)
             drawCenterArtwork(in: inset, centerDraw: centerDraw, context: cg)
             drawWordmark()
+            drawMeta(duration: duration, personaName: personaName)
         }
     }
 
@@ -112,16 +129,26 @@ struct WaveformVideoRenderer {
         UIColor(red: 0.40, green: 0.78, blue: 1.0, alpha: 1.0)
     }
 
-    /// Dark neutral background.
+    /// Dark sheet-compatible background.
     private func drawCoverBackground(in bounds: CGRect, context cg: CGContext) {
-        UIColor(white: 0.07, alpha: 1.0).setFill()
-        cg.fill(bounds)
+        let colors = [
+            UIColor(hex: 0x161619).cgColor,
+            UIColor(hex: 0x0C0C0E).cgColor,
+        ] as CFArray
+        let locations: [CGFloat] = [0, 1]
+        guard let gradient = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(),
+                                        colors: colors,
+                                        locations: locations) else { return }
+        cg.drawLinearGradient(gradient,
+                              start: CGPoint(x: bounds.midX, y: bounds.minY),
+                              end: CGPoint(x: bounds.midX, y: bounds.maxY),
+                              options: [])
     }
 
     /// Subtle rounded inner frame.
     private func drawInnerFrame(in inset: CGRect) {
         let framePath = UIBezierPath(roundedRect: inset, cornerRadius: CoverLayout.cornerRadius)
-        UIColor(white: 0.16, alpha: 1.0).setStroke()
+        UIColor.white.withAlphaComponent(0.10).setStroke()
         framePath.lineWidth = CoverLayout.frameLineWidth
         framePath.stroke()
     }
@@ -169,15 +196,43 @@ struct WaveformVideoRenderer {
         (text as NSString).draw(in: textRect, withAttributes: attrs)
     }
 
+    private func drawMeta(duration: CMTime, personaName: String?) {
+        let frameSize = VideoSpec.frameSize
+        let durationText = formattedDuration(duration)
+        let detail = [personaName, durationText].compactMap { value -> String? in
+            guard let value, !value.isEmpty else { return nil }
+            return value
+        }.joined(separator: " · ")
+
+        guard !detail.isEmpty else { return }
+
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: CoverLayout.metaFontSize, weight: .medium),
+            .foregroundColor: UIColor.white.withAlphaComponent(0.55),
+            .paragraphStyle: paragraph,
+        ]
+        let textSize = (detail as NSString).size(withAttributes: attrs)
+        let textRect = CGRect(x: 0,
+                              y: frameSize.height * CoverLayout.metaYRatio,
+                              width: frameSize.width,
+                              height: textSize.height)
+        (detail as NSString).draw(in: textRect, withAttributes: attrs)
+    }
+
     // MARK: - Waveform sampling
 
-    private let barCount = 40
+    private let barCount = 54
 
-    /// Read linear PCM, average absolute amplitude into ~40 buckets, normalize
+    /// Read linear PCM, average absolute amplitude into 54 buckets, normalize
     /// to 0...1. Returns nil/empty on any failure so the caller can fall back.
     private func waveformBars(from asset: AVURLAsset) async throws -> [CGFloat] {
         guard let audioTrack = try await firstAudioTrack(in: asset) else { return [] }
-        return try readPCMAmplitudes(from: asset, track: audioTrack)
+        let estimatedTotalSamples = try await estimatedSampleCount(for: audioTrack)
+        return try readPCMAmplitudes(from: asset,
+                                     track: audioTrack,
+                                     estimatedTotalSamples: estimatedTotalSamples)
     }
 
     private func firstAudioTrack(in asset: AVURLAsset) async throws -> AVAssetTrack? {
@@ -204,7 +259,9 @@ struct WaveformVideoRenderer {
 
     /// Stream audio samples into a fixed number of buckets. Never retain
     /// per-sample amplitudes; iMessage extensions have a tight memory budget.
-    private func readPCMAmplitudes(from asset: AVURLAsset, track: AVAssetTrack) throws -> [CGFloat] {
+    private func readPCMAmplitudes(from asset: AVURLAsset,
+                                   track: AVAssetTrack,
+                                   estimatedTotalSamples: Int) throws -> [CGFloat] {
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: linearPCMReaderSettings)
         output.alwaysCopiesSampleData = false
@@ -215,7 +272,7 @@ struct WaveformVideoRenderer {
         var sums = Array(repeating: CGFloat.zero, count: barCount)
         var counts = Array(repeating: 0, count: barCount)
         var sampleIndex = 0
-        let estimatedTotalSamples = max(estimatedSampleCount(for: track), barCount)
+        let estimatedTotalSamples = max(estimatedTotalSamples, barCount)
 
         while let sample = output.copyNextSampleBuffer() {
             autoreleasepool {
@@ -251,12 +308,22 @@ struct WaveformVideoRenderer {
         return normalizeBars(bars)
     }
 
-    private func estimatedSampleCount(for track: AVAssetTrack) -> Int {
-        let durationSeconds = max(CMTimeGetSeconds(track.timeRange.duration), 0)
+    private func estimatedSampleCount(for track: AVAssetTrack) async throws -> Int {
+        let timeRange: CMTimeRange
+        let formatDescriptions: [CMFormatDescription]
+
+        if #available(iOS 16.0, *) {
+            timeRange = try await track.load(.timeRange)
+            formatDescriptions = try await track.load(.formatDescriptions)
+        } else {
+            timeRange = track.timeRange
+            formatDescriptions = track.formatDescriptions as! [CMFormatDescription]
+        }
+
+        let durationSeconds = max(CMTimeGetSeconds(timeRange.duration), 0)
         var sampleRate = 44_100.0
-        if let description = track.formatDescriptions.first {
-            let audioDescription = description as! CMAudioFormatDescription
-            if let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(audioDescription) {
+        if let description = formatDescriptions.first {
+            if let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description) {
                 sampleRate = max(streamDescription.pointee.mSampleRate, 1)
             }
         }
@@ -272,21 +339,24 @@ struct WaveformVideoRenderer {
     /// Draw normalized bars as a centered vertical-bar waveform in `rect`.
     private func drawWaveform(bars: [CGFloat], in rect: CGRect, context: CGContext) {
         guard !bars.isEmpty else { return }
-        let accent = UIColor(red: 0.40, green: 0.78, blue: 1.0, alpha: 1.0)
-        accent.setFill()
-
-        let spacing: CGFloat = 4
+        let spacing: CGFloat = 3
         let totalSpacing = spacing * CGFloat(bars.count - 1)
         let barWidth = max((rect.width - totalSpacing) / CGFloat(bars.count), 1)
         let midY = rect.midY
         let minBar: CGFloat = 4
 
         for (i, value) in bars.enumerated() {
+            let t = CGFloat(i) / CGFloat(max(bars.count, 1))
+            let color = Self.rainbowColor(t: t, lightness: 0.62, saturation: 1, alpha: 1)
             let x = rect.minX + CGFloat(i) * (barWidth + spacing)
             let height = max(value * rect.height, minBar)
             let barRect = CGRect(x: x, y: midY - height / 2, width: barWidth, height: height)
             let path = UIBezierPath(roundedRect: barRect, cornerRadius: barWidth / 2)
+            context.saveGState()
+            context.setShadow(offset: .zero, blur: 10, color: color.withAlphaComponent(0.90).cgColor)
+            color.setFill()
             path.fill()
+            context.restoreGState()
         }
     }
 
@@ -349,15 +419,20 @@ struct WaveformVideoRenderer {
         }
 
         do {
-            try await writeVideoTrack(input: videoInput,
-                                      adaptor: adaptor,
-                                      buffer: buffer,
-                                      duration: duration,
-                                      writer: writer)
-            try await writeAudioTrack(reader: audioReader,
-                                      output: audioOutput,
-                                      input: audioInput,
-                                      writer: writer)
+            // Both inputs must be fed concurrently — feeding the full video
+            // track while the audio input sits unfed fills the video input's
+            // queue and the muxer deadlocks waiting to interleave audio.
+            async let video: Void = writeVideoTrack(input: videoInput,
+                                                    adaptor: adaptor,
+                                                    buffer: buffer,
+                                                    duration: duration,
+                                                    writer: writer)
+            async let audio: Void = writeAudioTrack(reader: audioReader,
+                                                    output: audioOutput,
+                                                    input: audioInput,
+                                                    writer: writer)
+            try await video
+            try await audio
         } catch {
             log.error("RENDER: writeMovie cancel/fail \(error.localizedDescription)")
             audioReader.cancelReading()
@@ -524,5 +599,32 @@ struct WaveformVideoRenderer {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return dir.appendingPathComponent("\(suffix)-\(UUID().uuidString).\(ext)")
+    }
+
+    private func formattedDuration(_ duration: CMTime) -> String? {
+        let seconds = CMTimeGetSeconds(duration)
+        guard seconds.isFinite, seconds > 0 else { return nil }
+        let total = max(1, Int(seconds.rounded()))
+        return "\(total / 60):\(String(format: "%02d", total % 60))"
+    }
+
+    private static func rainbowColor(t: CGFloat,
+                                     lightness: CGFloat,
+                                     saturation: CGFloat,
+                                     alpha: CGFloat) -> UIColor {
+        let hueDegrees = (140 + t * 280).truncatingRemainder(dividingBy: 360)
+        return UIColor(hue: hueDegrees / 360,
+                       saturation: saturation,
+                       brightness: lightness,
+                       alpha: alpha)
+    }
+}
+
+private extension UIColor {
+    convenience init(hex: UInt32) {
+        self.init(red: CGFloat((hex >> 16) & 0xff) / 255,
+                  green: CGFloat((hex >> 8) & 0xff) / 255,
+                  blue: CGFloat(hex & 0xff) / 255,
+                  alpha: 1)
     }
 }
