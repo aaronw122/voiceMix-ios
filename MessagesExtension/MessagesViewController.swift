@@ -113,16 +113,9 @@ class MessagesViewController: MSMessagesAppViewController {
 
         Task {
             do {
-                let response = try await service.convert(audioURL: recordedURL, voiceId: voiceId)
-                guard let audioUrl = URL(string: response.audioUrl) else {
-                    throw ConvertServiceError.invalidAudioURL
-                }
-                let localMP3 = try await service.fetchAudio(audioUrl)
-                // Presentation step: wrap the audio in an mp4 so Messages renders
-                // an inline media bubble that plays in the transcript.
-                let mp4 = try await WaveformVideoRenderer().makeVideo(fromAudio: localMP3)
+                let clipURL = try await prepareClip(from: recordedURL)
                 await MainActor.run {
-                    self.readyClipURL = mp4
+                    self.readyClipURL = clipURL
                     self.setLoading(false, message: "Ready — tap Send")
                     self.sendButton.isHidden = false
                 }
@@ -132,6 +125,17 @@ class MessagesViewController: MSMessagesAppViewController {
                 }
             }
         }
+    }
+
+    /// Convert the recording, download the result, and wrap it in an mp4 so
+    /// Messages renders an inline media bubble that plays in the transcript.
+    private func prepareClip(from recordedURL: URL) async throws -> URL {
+        let response = try await service.convert(audioURL: recordedURL, voiceId: voiceId)
+        guard let audioUrl = URL(string: response.audioUrl) else {
+            throw ConvertServiceError.invalidAudioURL
+        }
+        let convertedAudioURL = try await service.fetchAudio(audioUrl)
+        return try await WaveformVideoRenderer().makeVideo(fromAudio: convertedAudioURL)
     }
 
     @objc private func sendTapped() {

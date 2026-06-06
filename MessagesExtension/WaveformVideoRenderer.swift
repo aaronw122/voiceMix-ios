@@ -15,36 +15,53 @@ struct WaveformVideoRenderer {
 
     enum RenderError: Error {
         case noAudioTrack
+        case noVideoTrack
         case writerSetupFailed
         case pixelBufferFailed
         case exportFailed(String)
     }
 
-    private let frameSize = CGSize(width: 600, height: 600)
-    /// The frame is static, so a low fps keeps the video tiny.
-    private let fps: Int32 = 6
+    /// Video output dimensions and timing. The frame is static, so a low fps
+    /// keeps the video tiny.
+    private enum VideoSpec {
+        static let frameSize = CGSize(width: 600, height: 600)
+        static let framesPerSecond: Int32 = 6
+        static let minimumDurationSeconds = 0.1
+    }
+
+    /// Layout ratios and metrics for the branded square cover.
+    private enum CoverLayout {
+        static let frameInset: CGFloat = 40
+        static let cornerRadius: CGFloat = 28
+        static let frameLineWidth: CGFloat = 3
+        static let centerInset: CGFloat = 40
+        static let centerBandYRatio: CGFloat = 0.30
+        static let centerBandHeightRatio: CGFloat = 0.30
+        static let wordmarkYRatio: CGFloat = 0.70
+        static let micPointSize: CGFloat = 200
+        static let wordmarkFontSize: CGFloat = 64
+    }
 
     /// Wrap `audioURL` in an `.mp4` with a static branded cover and return the
     /// new file URL (durable, uniquely named, in caches).
     func makeVideo(fromAudio audioURL: URL) async throws -> URL {
         let asset = AVURLAsset(url: audioURL)
         let duration = try await loadDuration(asset)
-
-        // Try to draw a real waveform from PCM samples; fall back to the static
-        // mic cover if sample reading fails or yields nothing (never blank).
-        let cover: UIImage
-        if let bars = try? await waveformBars(from: asset), !bars.isEmpty {
-            cover = makeCoverImage(centerDraw: { ctx, rect in
-                drawWaveform(bars: bars, in: rect, context: ctx)
-            })
-        } else {
-            cover = makeCoverImage()
-        }
-
+        let cover = await makeBestAvailableCover(for: asset)
         return try await renderVideo(audioURL: audioURL,
-                                     asset: asset,
                                      duration: duration,
                                      cover: cover)
+    }
+
+    /// Try to draw a real waveform from PCM samples; fall back to the static
+    /// mic cover if sample reading fails or yields nothing (never blank).
+    private func makeBestAvailableCover(for asset: AVURLAsset) async -> UIImage {
+        if let bars = try? await waveformBars(from: asset), !bars.isEmpty {
+            return makeCoverImage(centerDraw: { ctx, rect in
+                drawWaveform(bars: bars, in: rect, context: ctx)
+            })
+        }
+        return makeCoverImage()
     }
 
     // MARK: - Duration
@@ -63,59 +80,78 @@ struct WaveformVideoRenderer {
     /// and the "voiceMix" wordmark. Subclasses of this concern (the waveform)
     /// override the center by passing a custom drawing block.
     func makeCoverImage(centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
-        let renderer = UIGraphicsImageRenderer(size: frameSize)
+        let renderer = UIGraphicsImageRenderer(size: VideoSpec.frameSize)
         return renderer.image { ctx in
             let cg = ctx.cgContext
-            let bounds = CGRect(origin: .zero, size: frameSize)
+            let bounds = CGRect(origin: .zero, size: VideoSpec.frameSize)
+            let inset = bounds.insetBy(dx: CoverLayout.frameInset, dy: CoverLayout.frameInset)
 
-            // Dark neutral background.
-            UIColor(white: 0.07, alpha: 1.0).setFill()
-            cg.fill(bounds)
-
-            // Subtle rounded inner frame.
-            let inset = bounds.insetBy(dx: 40, dy: 40)
-            let framePath = UIBezierPath(roundedRect: inset, cornerRadius: 28)
-            UIColor(white: 0.16, alpha: 1.0).setStroke()
-            framePath.lineWidth = 3
-            framePath.stroke()
-
-            let accent = UIColor(red: 0.40, green: 0.78, blue: 1.0, alpha: 1.0)
-
-            if let centerDraw {
-                // Custom center (e.g. waveform). Reserve the middle band.
-                let centerRect = CGRect(x: inset.minX + 40,
-                                        y: frameSize.height * 0.30,
-                                        width: inset.width - 80,
-                                        height: frameSize.height * 0.30)
-                centerDraw(cg, centerRect)
-            } else {
-                // Default: centered mic glyph.
-                let config = UIImage.SymbolConfiguration(pointSize: 200, weight: .semibold)
-                if let mic = UIImage(systemName: "mic.fill", withConfiguration: config) {
-                    let tinted = mic.withTintColor(accent, renderingMode: .alwaysOriginal)
-                    let micSize = tinted.size
-                    let micOrigin = CGPoint(x: (frameSize.width - micSize.width) / 2,
-                                            y: frameSize.height * 0.30)
-                    tinted.draw(at: micOrigin)
-                }
-            }
-
-            // Wordmark.
-            let text = "voiceMix"
-            let paragraph = NSMutableParagraphStyle()
-            paragraph.alignment = .center
-            let attrs: [NSAttributedString.Key: Any] = [
-                .font: UIFont.systemFont(ofSize: 64, weight: .bold),
-                .foregroundColor: UIColor.white,
-                .paragraphStyle: paragraph,
-            ]
-            let textSize = (text as NSString).size(withAttributes: attrs)
-            let textRect = CGRect(x: 0,
-                                  y: frameSize.height * 0.70,
-                                  width: frameSize.width,
-                                  height: textSize.height)
-            (text as NSString).draw(in: textRect, withAttributes: attrs)
+            drawCoverBackground(in: bounds, context: cg)
+            drawInnerFrame(in: inset)
+            drawCenterArtwork(in: inset, centerDraw: centerDraw, context: cg)
+            drawWordmark()
         }
+    }
+
+    private var coverAccentColor: UIColor {
+        UIColor(red: 0.40, green: 0.78, blue: 1.0, alpha: 1.0)
+    }
+
+    /// Dark neutral background.
+    private func drawCoverBackground(in bounds: CGRect, context cg: CGContext) {
+        UIColor(white: 0.07, alpha: 1.0).setFill()
+        cg.fill(bounds)
+    }
+
+    /// Subtle rounded inner frame.
+    private func drawInnerFrame(in inset: CGRect) {
+        let framePath = UIBezierPath(roundedRect: inset, cornerRadius: CoverLayout.cornerRadius)
+        UIColor(white: 0.16, alpha: 1.0).setStroke()
+        framePath.lineWidth = CoverLayout.frameLineWidth
+        framePath.stroke()
+    }
+
+    /// Custom center art (e.g. waveform) in the reserved middle band, or the
+    /// default centered mic glyph.
+    private func drawCenterArtwork(in inset: CGRect,
+                                   centerDraw: ((CGContext, CGRect) -> Void)?,
+                                   context cg: CGContext) {
+        let frameSize = VideoSpec.frameSize
+        if let centerDraw {
+            let centerRect = CGRect(x: inset.minX + CoverLayout.centerInset,
+                                    y: frameSize.height * CoverLayout.centerBandYRatio,
+                                    width: inset.width - CoverLayout.centerInset * 2,
+                                    height: frameSize.height * CoverLayout.centerBandHeightRatio)
+            centerDraw(cg, centerRect)
+        } else {
+            let config = UIImage.SymbolConfiguration(pointSize: CoverLayout.micPointSize, weight: .semibold)
+            if let mic = UIImage(systemName: "mic.fill", withConfiguration: config) {
+                let tinted = mic.withTintColor(coverAccentColor, renderingMode: .alwaysOriginal)
+                let micSize = tinted.size
+                let micOrigin = CGPoint(x: (frameSize.width - micSize.width) / 2,
+                                        y: frameSize.height * CoverLayout.centerBandYRatio)
+                tinted.draw(at: micOrigin)
+            }
+        }
+    }
+
+    /// The "voiceMix" wordmark.
+    private func drawWordmark() {
+        let frameSize = VideoSpec.frameSize
+        let text = "voiceMix"
+        let paragraph = NSMutableParagraphStyle()
+        paragraph.alignment = .center
+        let attrs: [NSAttributedString.Key: Any] = [
+            .font: UIFont.systemFont(ofSize: CoverLayout.wordmarkFontSize, weight: .bold),
+            .foregroundColor: UIColor.white,
+            .paragraphStyle: paragraph,
+        ]
+        let textSize = (text as NSString).size(withAttributes: attrs)
+        let textRect = CGRect(x: 0,
+                              y: frameSize.height * CoverLayout.wordmarkYRatio,
+                              width: frameSize.width,
+                              height: textSize.height)
+        (text as NSString).draw(in: textRect, withAttributes: attrs)
     }
 
     // MARK: - Waveform sampling
@@ -125,23 +161,38 @@ struct WaveformVideoRenderer {
     /// Read linear PCM, average absolute amplitude into ~40 buckets, normalize
     /// to 0...1. Returns nil/empty on any failure so the caller can fall back.
     private func waveformBars(from asset: AVURLAsset) async throws -> [CGFloat] {
+        guard let audioTrack = try await firstAudioTrack(in: asset) else { return [] }
+        let amplitudes = try readPCMAmplitudes(from: asset, track: audioTrack)
+        return normalizedBars(from: amplitudes)
+    }
+
+    private func firstAudioTrack(in asset: AVURLAsset) async throws -> AVAssetTrack? {
         let tracks: [AVAssetTrack]
         if #available(iOS 16.0, *) {
             tracks = try await asset.loadTracks(withMediaType: .audio)
         } else {
             tracks = asset.tracks(withMediaType: .audio)
         }
-        guard let track = tracks.first else { return [] }
+        return tracks.first
+    }
 
-        let reader = try AVAssetReader(asset: asset)
-        let settings: [String: Any] = [
+    /// 16-bit interleaved little-endian linear PCM — the simplest format to
+    /// decode into `Int16` samples below.
+    private var linearPCMReaderSettings: [String: Any] {
+        [
             AVFormatIDKey: Int(kAudioFormatLinearPCM),
             AVLinearPCMBitDepthKey: 16,
             AVLinearPCMIsBigEndianKey: false,
             AVLinearPCMIsFloatKey: false,
             AVLinearPCMIsNonInterleaved: false,
         ]
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+    }
+
+    /// Read every audio sample as absolute amplitude in 0...1. Returns [] on
+    /// any reader failure so the caller can fall back.
+    private func readPCMAmplitudes(from asset: AVURLAsset, track: AVAssetTrack) throws -> [CGFloat] {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: linearPCMReaderSettings)
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { return [] }
         reader.add(output)
@@ -166,10 +217,20 @@ struct WaveformVideoRenderer {
             CMSampleBufferInvalidate(sample)
         }
 
-        guard reader.status == .completed || reader.status == .reading,
-              !amplitudes.isEmpty else { return [] }
+        guard reader.status == .completed || reader.status == .reading else { return [] }
+        return amplitudes
+    }
 
-        // Downsample to barCount buckets by averaging absolute amplitude.
+    /// Turn raw per-sample amplitudes into normalized bar heights: average into
+    /// bars, then normalize so the loudest bar reaches full height.
+    private func normalizedBars(from amplitudes: [CGFloat]) -> [CGFloat] {
+        guard !amplitudes.isEmpty else { return [] }
+        let bars = averageAmplitudesIntoBars(amplitudes)
+        return normalizeBars(bars)
+    }
+
+    /// Downsample to barCount buckets by averaging absolute amplitude.
+    private func averageAmplitudesIntoBars(_ amplitudes: [CGFloat]) -> [CGFloat] {
         let chunk = max(amplitudes.count / barCount, 1)
         var bars: [CGFloat] = []
         var index = 0
@@ -180,8 +241,11 @@ struct WaveformVideoRenderer {
             bars.append(avg)
             index = end
         }
+        return bars
+    }
 
-        // Normalize so the loudest bar reaches full height.
+    /// Normalize so the loudest bar reaches full height.
+    private func normalizeBars(_ bars: [CGFloat]) -> [CGFloat] {
         guard let peak = bars.max(), peak > 0 else { return [] }
         return bars.map { $0 / peak }
     }
@@ -210,7 +274,6 @@ struct WaveformVideoRenderer {
     // MARK: - Render + mux
 
     private func renderVideo(audioURL: URL,
-                             asset: AVURLAsset,
                              duration: CMTime,
                              cover: UIImage) async throws -> URL {
         let videoOnlyURL = uniqueTempURL(suffix: "video", ext: "mp4")
@@ -237,16 +300,16 @@ struct WaveformVideoRenderer {
 
         let settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
-            AVVideoWidthKey: Int(frameSize.width),
-            AVVideoHeightKey: Int(frameSize.height),
+            AVVideoWidthKey: Int(VideoSpec.frameSize.width),
+            AVVideoHeightKey: Int(VideoSpec.frameSize.height),
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
 
         let attrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32ARGB),
-            kCVPixelBufferWidthKey as String: Int(frameSize.width),
-            kCVPixelBufferHeightKey as String: Int(frameSize.height),
+            kCVPixelBufferWidthKey as String: Int(VideoSpec.frameSize.width),
+            kCVPixelBufferHeightKey as String: Int(VideoSpec.frameSize.height),
         ]
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
                                                            sourcePixelBufferAttributes: attrs)
@@ -263,16 +326,10 @@ struct WaveformVideoRenderer {
             throw RenderError.pixelBufferFailed
         }
 
-        // A static frame at .zero plus one at the end pins length to the audio.
-        let durationSeconds = max(CMTimeGetSeconds(duration), 0.1)
-        let frameCount = max(Int(durationSeconds * Double(fps)), 2)
-
-        for frame in 0..<frameCount {
+        for presentationTime in staticFrameTimes(covering: duration) {
             while !input.isReadyForMoreMediaData {
                 try await Task.sleep(nanoseconds: 5_000_000)
             }
-            let presentationTime = CMTime(value: CMTimeValue(frame),
-                                          timescale: fps)
             adaptor.append(buffer, withPresentationTime: presentationTime)
         }
 
@@ -283,6 +340,15 @@ struct WaveformVideoRenderer {
         if writer.status != .completed {
             throw RenderError.exportFailed(writer.error?.localizedDescription ?? "video write failed")
         }
+    }
+
+    /// Presentation times for the static cover frames. A frame at .zero plus
+    /// frames through the end pin the video length to the audio.
+    private func staticFrameTimes(covering duration: CMTime) -> [CMTime] {
+        let fps = VideoSpec.framesPerSecond
+        let durationSeconds = max(CMTimeGetSeconds(duration), VideoSpec.minimumDurationSeconds)
+        let frameCount = max(Int(durationSeconds * Double(fps)), 2)
+        return (0..<frameCount).map { CMTime(value: CMTimeValue($0), timescale: fps) }
     }
 
     private func mux(videoURL: URL,
@@ -303,7 +369,7 @@ struct WaveformVideoRenderer {
             audioTracks = audioAsset.tracks(withMediaType: .audio)
         }
 
-        guard let sourceVideo = videoTracks.first else { throw RenderError.noAudioTrack }
+        guard let sourceVideo = videoTracks.first else { throw RenderError.noVideoTrack }
         guard let sourceAudio = audioTracks.first else { throw RenderError.noAudioTrack }
 
         let range = CMTimeRange(start: .zero, duration: duration)
@@ -344,8 +410,8 @@ struct WaveformVideoRenderer {
     // MARK: - Pixel buffer
 
     private func pixelBuffer(from image: CGImage) -> CVPixelBuffer? {
-        let width = Int(frameSize.width)
-        let height = Int(frameSize.height)
+        let width = Int(VideoSpec.frameSize.width)
+        let height = Int(VideoSpec.frameSize.height)
 
         let attrs: [String: Any] = [
             kCVPixelBufferCGImageCompatibilityKey as String: true,
