@@ -11,6 +11,12 @@
 		2C2FF33653D5A5762B077B27 /* voiceMixerApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 48BD8DC0DE2968F1904063C8 /* voiceMixerApp.swift */; };
 		865FC2073D3925365D521828 /* voiceMixerMessages.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E6C13A6C87CC73CD0FE5734E /* voiceMixerMessages.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		C24E0BEEC3C71A60E9E6D8B0 /* MessagesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */; };
+		BB01000000000000000000B1 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB01000000000000000000A1 /* Config.swift */; };
+		BB02000000000000000000B1 /* ConvertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB02000000000000000000A1 /* ConvertService.swift */; };
+		BB03000000000000000000B1 /* MockConvertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB03000000000000000000A1 /* MockConvertService.swift */; };
+		BB04000000000000000000B1 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB04000000000000000000A1 /* AudioRecorder.swift */; };
+		BB05000000000000000000B1 /* LiveConvertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB05000000000000000000A1 /* LiveConvertService.swift */; };
+		BB06000000000000000000B1 /* sample.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = BB06000000000000000000A1 /* sample.mp3 */; };
 		AA01000000000000000000B1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA01000000000000000000A1 /* Assets.xcassets */; };
 		AA02000000000000000000B2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA02000000000000000000A2 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
@@ -41,6 +47,12 @@
 
 /* Begin PBXFileReference section */
 		0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesViewController.swift; sourceTree = "<group>"; };
+		BB01000000000000000000A1 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
+		BB02000000000000000000A1 /* ConvertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvertService.swift; sourceTree = "<group>"; };
+		BB03000000000000000000A1 /* MockConvertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockConvertService.swift; sourceTree = "<group>"; };
+		BB04000000000000000000A1 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
+		BB05000000000000000000A1 /* LiveConvertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveConvertService.swift; sourceTree = "<group>"; };
+		BB06000000000000000000A1 /* sample.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = sample.mp3; sourceTree = "<group>"; };
 		48BD8DC0DE2968F1904063C8 /* voiceMixerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = voiceMixerApp.swift; sourceTree = "<group>"; };
 		8348741E11F92917B314A746 /* voiceMixer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = voiceMixer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		D1EFA29EF7F844D5EDE2B0CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
@@ -66,6 +78,12 @@
 			children = (
 				D1EFA29EF7F844D5EDE2B0CD /* Info.plist */,
 				0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */,
+				BB01000000000000000000A1 /* Config.swift */,
+				BB02000000000000000000A1 /* ConvertService.swift */,
+				BB03000000000000000000A1 /* MockConvertService.swift */,
+				BB04000000000000000000A1 /* AudioRecorder.swift */,
+				BB05000000000000000000A1 /* LiveConvertService.swift */,
+				BB06000000000000000000A1 /* sample.mp3 */,
 				00E96CFBA39EC3A302467EBE /* MainInterface.storyboard */,
 				AA02000000000000000000A2 /* Assets.xcassets */,
 			);
@@ -176,6 +194,7 @@
 			files = (
 				0C5C26600382474AA52DC4D6 /* MainInterface.storyboard in Resources */,
 				AA02000000000000000000B2 /* Assets.xcassets in Resources */,
+				BB06000000000000000000B1 /* sample.mp3 in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -203,6 +222,11 @@
 			buildActionMask = 2147483647;
 			files = (
 				C24E0BEEC3C71A60E9E6D8B0 /* MessagesViewController.swift in Sources */,
+				BB01000000000000000000B1 /* Config.swift in Sources */,
+				BB02000000000000000000B1 /* ConvertService.swift in Sources */,
+				BB03000000000000000000B1 /* MockConvertService.swift in Sources */,
+				BB04000000000000000000B1 /* AudioRecorder.swift in Sources */,
+				BB05000000000000000000B1 /* LiveConvertService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
