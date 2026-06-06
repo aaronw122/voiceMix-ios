@@ -50,6 +50,49 @@ final class AudioRecorder: NSObject {
     enum RecorderError: Error {
         case failedToStart
     }
+
+    // MARK: - Microphone permission
+
+    /// Coarse mic-permission state, normalized across the iOS 17+ and legacy APIs.
+    enum MicPermission {
+        case granted
+        case denied
+        case undetermined
+    }
+
+    /// Current record-permission state without prompting.
+    static var micPermission: MicPermission {
+        if #available(iOS 17.0, *) {
+            switch AVAudioApplication.shared.recordPermission {
+            case .granted: return .granted
+            case .denied: return .denied
+            case .undetermined: return .undetermined
+            @unknown default: return .undetermined
+            }
+        } else {
+            switch AVAudioSession.sharedInstance().recordPermission {
+            case .granted: return .granted
+            case .denied: return .denied
+            case .undetermined: return .undetermined
+            @unknown default: return .undetermined
+            }
+        }
+    }
+
+    /// Explicitly request record permission. The completion is hopped onto the
+    /// main actor so callers can update UI directly. In an iMessage extension
+    /// the implicit prompt from `AVAudioRecorder.record()` often never fires, so
+    /// we must request explicitly before recording.
+    static func requestMicPermission(_ completion: @escaping (Bool) -> Void) {
+        let deliver: (Bool) -> Void = { granted in
+            Task { @MainActor in completion(granted) }
+        }
+        if #available(iOS 17.0, *) {
+            AVAudioApplication.requestRecordPermission(completionHandler: deliver)
+        } else {
+            AVAudioSession.sharedInstance().requestRecordPermission(deliver)
+        }
+    }
 }
 
 extension AudioRecorder: AVAudioRecorderDelegate {}

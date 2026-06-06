@@ -1,6 +1,7 @@
 import Foundation
 import AVFoundation
 import UIKit
+import os
 
 /// Presentation-layer wrapper that turns a converted audio file into a short
 /// `.mp4` so Messages renders an inline media bubble (with a play button) that
@@ -12,6 +13,8 @@ import UIKit
 /// an audio file URL; this step is applied uniformly to mock and live audio
 /// just before `insertAttachment`.
 struct WaveformVideoRenderer {
+
+    private let log = Logger(subsystem: "com.aaron.voiceMixer", category: "render")
 
     enum RenderError: Error {
         case noAudioTrack
@@ -45,12 +48,20 @@ struct WaveformVideoRenderer {
     /// Wrap `audioURL` in an `.mp4` with a static branded cover and return the
     /// new file URL (durable, uniquely named, in caches).
     func makeVideo(fromAudio audioURL: URL) async throws -> URL {
-        let asset = AVURLAsset(url: audioURL)
-        let duration = try await loadDuration(asset)
-        let cover = await makeBestAvailableCover(for: asset)
-        return try await renderVideo(audioURL: audioURL,
-                                     duration: duration,
-                                     cover: cover)
+        log.info("RENDER: makeVideo entry")
+        do {
+            let asset = AVURLAsset(url: audioURL)
+            let duration = try await loadDuration(asset)
+            let cover = await makeBestAvailableCover(for: asset)
+            let url = try await renderVideo(audioURL: audioURL,
+                                            duration: duration,
+                                            cover: cover)
+            log.info("RENDER: makeVideo exit")
+            return url
+        } catch {
+            log.error("RENDER: makeVideo threw \(error.localizedDescription)")
+            throw error
+        }
     }
 
     /// Try to draw a real waveform from PCM samples; fall back to the static
