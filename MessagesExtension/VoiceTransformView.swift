@@ -5,7 +5,6 @@ import os
 struct VoicePersona: Identifiable, Equatable {
     let id: String
     let name: String
-    let tag: String
     let monogram: String
     let color1: Color
     let color2: Color
@@ -15,7 +14,6 @@ struct VoicePersona: Identifiable, Equatable {
     static let all: [VoicePersona] = [
         VoicePersona(id: "elder",
                      name: "The Elder",
-                     tag: "Weathered · warm · unhurried",
                      monogram: "E",
                      color1: Color(hex: 0xF7B733),
                      color2: Color(hex: 0xFC4A1A),
@@ -23,7 +21,6 @@ struct VoicePersona: Identifiable, Equatable {
                      uiColor2: UIColor(hex: 0xFC4A1A)),
         VoicePersona(id: "aria",
                      name: "Aria",
-                     tag: "Bright · clear · youthful",
                      monogram: "A",
                      color1: Color(hex: 0xF857A6),
                      color2: Color(hex: 0x9B5CF6),
@@ -31,7 +28,6 @@ struct VoicePersona: Identifiable, Equatable {
                      uiColor2: UIColor(hex: 0x9B5CF6)),
         VoicePersona(id: "mlk",
                      name: "M.L.K.",
-                     tag: "Resonant · oratorical",
                      monogram: "M",
                      color1: Color(hex: 0x36D1DC),
                      color2: Color(hex: 0x5B86E5),
@@ -282,7 +278,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.log.error("CONVERT: failed \(String(describing: error))")
                 self.stopStatusTimer()
                 self.step = .record
-                self.statusLine = "Convert failed: \(String(describing: error))"
+                self.statusLine = "Convert failed"
                 self.conversionTask = nil
             }
         }
@@ -525,47 +521,72 @@ struct VoiceTransformView: View {
     }
 
     private var personaPage: some View {
-        VStack(spacing: 20) {
-            Spacer(minLength: 10)
-            Text("Pick a voice. Your recording will be re-voiced in this persona.")
-                .font(.system(size: 13.5))
-                .foregroundStyle(.white.opacity(0.50))
-                .multilineTextAlignment(.center)
-                .lineSpacing(3)
-                .padding(.horizontal, 34)
+        VStack(spacing: 14) {
+            personaCarousel
 
-            TabView(selection: Binding(
-                get: { model.selectedPersona.id },
-                set: { id in
-                    if let persona = VoicePersona.all.first(where: { $0.id == id }) {
-                        model.selectedPersona = persona
-                    }
-                }
-            )) {
-                ForEach(VoicePersona.all) { persona in
-                    personaButton(persona)
-                        .tag(persona.id)
-                }
-            }
-            .tabViewStyle(.page(indexDisplayMode: .never))
-            .frame(height: 150)
-
-            HStack(spacing: 7) {
+            HStack(spacing: 5) {
                 ForEach(VoicePersona.all) { persona in
                     Capsule()
                         .fill(model.selectedPersona == persona ? model.selectedPersona.color2 : .white.opacity(0.22))
-                        .frame(width: model.selectedPersona == persona ? 18 : 6, height: 6)
+                        .frame(width: model.selectedPersona == persona ? 16 : 6, height: 6)
                 }
             }
-
-            Text(model.selectedPersona.tag)
-                .font(.system(size: 13.5))
-                .foregroundStyle(.white.opacity(0.60))
-                .multilineTextAlignment(.center)
-                .padding(.horizontal, 22)
-
-            Spacer(minLength: 24)
         }
+        .frame(maxHeight: .infinity)
+        .padding(.vertical, 8)
+    }
+
+    private var personaCarousel: some View {
+        GeometryReader { geo in
+            let cardWidth: CGFloat = 124
+            let sidePadding = max(0, (geo.size.width - cardWidth) / 2)
+            if #available(iOS 17.0, *) {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(VoicePersona.all) { persona in
+                            personaButton(persona)
+                                .frame(width: cardWidth)
+                                .id(persona.id)
+                        }
+                    }
+                    .scrollTargetLayout()
+                    .padding(.horizontal, sidePadding)
+                    .padding(.vertical, 14)
+                }
+                .scrollContentBackground(.hidden)
+                .scrollTargetBehavior(.viewAligned)
+                .scrollPosition(id: Binding(
+                    get: { model.selectedPersona.id },
+                    set: { newID in
+                        if let newID, let persona = VoicePersona.all.first(where: { $0.id == newID }) {
+                            model.selectedPersona = persona
+                        }
+                    }
+                ))
+            } else {
+                ScrollViewReader { proxy in
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 10) {
+                            ForEach(VoicePersona.all) { persona in
+                                personaButton(persona)
+                                    .frame(width: cardWidth)
+                                    .id(persona.id)
+                            }
+                        }
+                        .padding(.horizontal, sidePadding)
+                        .padding(.vertical, 14)
+                    }
+                    .scrollContentBackground(.hidden)
+                    .onAppear { proxy.scrollTo(model.selectedPersona.id, anchor: .center) }
+                    .onChange(of: model.selectedPersona) { _ in
+                        withAnimation(.easeOut(duration: 0.3)) {
+                            proxy.scrollTo(model.selectedPersona.id, anchor: .center)
+                        }
+                    }
+                }
+            }
+        }
+        .frame(height: 156)
     }
 
     private func personaButton(_ persona: VoicePersona) -> some View {
@@ -573,15 +594,14 @@ struct VoiceTransformView: View {
         return Button {
             model.selectedPersona = persona
         } label: {
-            VStack(spacing: 12) {
-                PersonaAvatarView(persona: persona, size: 104, selected: selected)
+            VStack(spacing: 10) {
+                PersonaAvatarView(persona: persona, size: 96, selected: selected)
                 Text(persona.name)
                     .font(.system(size: 15, weight: selected ? .bold : .medium))
                     .foregroundStyle(selected ? .white : .white.opacity(0.55))
             }
-            .scaleEffect(selected ? 1 : 0.78)
-            .opacity(selected ? 1 : 0.45)
-            .frame(width: 112)
+            .scaleEffect(selected ? 1 : 0.8)
+            .opacity(selected ? 1 : 0.5)
             .animation(.easeOut(duration: 0.25), value: selected)
         }
         .buttonStyle(.plain)
@@ -594,38 +614,34 @@ struct VoiceTransformView: View {
 
             Spacer(minLength: 0)
 
-            if model.step == .record && !model.isRecording {
-                Text("Tap the button below and speak. Your voice becomes theirs.")
-                    .font(.system(size: 15))
-                    .foregroundStyle(.white.opacity(0.40))
-                    .multilineTextAlignment(.center)
-                    .lineSpacing(3)
-                    .frame(maxWidth: 240)
-                    .frame(height: 160)
-            } else {
-                NeonWaveformView(mode: model.step == .transforming ? .transforming : .recording,
-                                 bars: model.waveformBars,
-                                 progress: 0)
-                    .frame(height: 160)
-                    .padding(.horizontal, 24)
-            }
+            NeonWaveformView(mode: recordWaveformMode,
+                             bars: model.waveformBars,
+                             progress: 0)
+                .frame(height: 130)
+                .padding(.horizontal, 24)
 
             Spacer(minLength: 0)
 
             statusView
-                .frame(height: 32)
-                .padding(.bottom, 12)
+                .frame(height: 30)
+                .padding(.bottom, 10)
 
             recordControl
-                .frame(height: 92)
+                .frame(height: 84)
 
             Text(model.isRecording ? "Tap to stop" : model.step == .transforming ? "" : "Tap to record")
                 .font(.system(size: 12.5))
                 .foregroundStyle(.white.opacity(0.35))
-                .frame(height: 18)
-                .padding(.top, 10)
-                .padding(.bottom, 28)
+                .frame(height: 16)
+                .padding(.top, 8)
+                .padding(.bottom, 16)
         }
+    }
+
+    private var recordWaveformMode: NeonWaveformView.Mode {
+        if model.step == .transforming { return .transforming }
+        if model.isRecording { return .recording }
+        return .ready
     }
 
     private var statusView: some View {
@@ -689,14 +705,14 @@ struct VoiceTransformView: View {
     private var reviewPage: some View {
         VStack(spacing: 0) {
             personaChip(showLiveBadge: false)
-                .padding(.top, 10)
+                .padding(.top, 6)
 
             Spacer(minLength: 0)
 
             NeonWaveformView(mode: model.isPlaying ? .playing : .ready,
                              bars: model.waveformBars,
                              progress: model.playProgress)
-                .frame(height: 160)
+                .frame(height: 130)
                 .padding(.horizontal, 24)
 
             Spacer(minLength: 0)
@@ -704,7 +720,7 @@ struct VoiceTransformView: View {
             Text("Transformed · \(model.formattedDuration)")
                 .font(.system(size: 13.5))
                 .foregroundStyle(.white.opacity(0.50))
-                .padding(.bottom, 18)
+                .padding(.bottom, 14)
 
             HStack(spacing: 28) {
                 VStack(spacing: 10) {
@@ -749,8 +765,8 @@ struct VoiceTransformView: View {
 
                 Color.clear.frame(width: 54)
             }
-            .frame(height: 112)
-            .padding(.bottom, 28)
+            .frame(height: 108)
+            .padding(.bottom, 16)
         }
     }
 
