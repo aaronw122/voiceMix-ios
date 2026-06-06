@@ -30,7 +30,17 @@ struct WaveformVideoRenderer {
         let asset = AVURLAsset(url: audioURL)
         let duration = try await loadDuration(asset)
 
-        let cover = makeCoverImage()
+        // Try to draw a real waveform from PCM samples; fall back to the static
+        // mic cover if sample reading fails or yields nothing (never blank).
+        let cover: UIImage
+        if let bars = try? await waveformBars(from: asset), !bars.isEmpty {
+            cover = makeCoverImage(centerDraw: { ctx, rect in
+                drawWaveform(bars: bars, in: rect, context: ctx)
+            })
+        } else {
+            cover = makeCoverImage()
+        }
+
         return try await renderVideo(audioURL: audioURL,
                                      asset: asset,
                                      duration: duration,
@@ -105,6 +115,95 @@ struct WaveformVideoRenderer {
                                   width: frameSize.width,
                                   height: textSize.height)
             (text as NSString).draw(in: textRect, withAttributes: attrs)
+        }
+    }
+
+    // MARK: - Waveform sampling
+
+    private let barCount = 40
+
+    /// Read linear PCM, average absolute amplitude into ~40 buckets, normalize
+    /// to 0...1. Returns nil/empty on any failure so the caller can fall back.
+    private func waveformBars(from asset: AVURLAsset) async throws -> [CGFloat] {
+        let tracks: [AVAssetTrack]
+        if #available(iOS 16.0, *) {
+            tracks = try await asset.loadTracks(withMediaType: .audio)
+        } else {
+            tracks = asset.tracks(withMediaType: .audio)
+        }
+        guard let track = tracks.first else { return [] }
+
+        let reader = try AVAssetReader(asset: asset)
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatLinearPCM),
+            AVLinearPCMBitDepthKey: 16,
+            AVLinearPCMIsBigEndianKey: false,
+            AVLinearPCMIsFloatKey: false,
+            AVLinearPCMIsNonInterleaved: false,
+        ]
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { return [] }
+        reader.add(output)
+        guard reader.startReading() else { return [] }
+
+        var amplitudes: [CGFloat] = []
+        while let sample = output.copyNextSampleBuffer() {
+            guard let block = CMSampleBufferGetDataBuffer(sample) else { continue }
+            let length = CMBlockBufferGetDataLength(block)
+            var data = Data(count: length)
+            data.withUnsafeMutableBytes { raw in
+                if let base = raw.baseAddress {
+                    CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: base)
+                }
+            }
+            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                let samples = raw.bindMemory(to: Int16.self)
+                for value in samples {
+                    amplitudes.append(CGFloat(abs(Int(value))) / CGFloat(Int16.max))
+                }
+            }
+            CMSampleBufferInvalidate(sample)
+        }
+
+        guard reader.status == .completed || reader.status == .reading,
+              !amplitudes.isEmpty else { return [] }
+
+        // Downsample to barCount buckets by averaging absolute amplitude.
+        let chunk = max(amplitudes.count / barCount, 1)
+        var bars: [CGFloat] = []
+        var index = 0
+        while index < amplitudes.count && bars.count < barCount {
+            let end = min(index + chunk, amplitudes.count)
+            let slice = amplitudes[index..<end]
+            let avg = slice.reduce(0, +) / CGFloat(slice.count)
+            bars.append(avg)
+            index = end
+        }
+
+        // Normalize so the loudest bar reaches full height.
+        guard let peak = bars.max(), peak > 0 else { return [] }
+        return bars.map { $0 / peak }
+    }
+
+    /// Draw normalized bars as a centered vertical-bar waveform in `rect`.
+    private func drawWaveform(bars: [CGFloat], in rect: CGRect, context: CGContext) {
+        guard !bars.isEmpty else { return }
+        let accent = UIColor(red: 0.40, green: 0.78, blue: 1.0, alpha: 1.0)
+        accent.setFill()
+
+        let spacing: CGFloat = 4
+        let totalSpacing = spacing * CGFloat(bars.count - 1)
+        let barWidth = max((rect.width - totalSpacing) / CGFloat(bars.count), 1)
+        let midY = rect.midY
+        let minBar: CGFloat = 4
+
+        for (i, value) in bars.enumerated() {
+            let x = rect.minX + CGFloat(i) * (barWidth + spacing)
+            let height = max(value * rect.height, minBar)
+            let barRect = CGRect(x: x, y: midY - height / 2, width: barWidth, height: height)
+            let path = UIBezierPath(roundedRect: barRect, cornerRadius: barWidth / 2)
+            path.fill()
         }
     }
 
