@@ -84,11 +84,6 @@ class MessagesViewController: MSMessagesAppViewController {
         }
     }
 
-    override func viewWillAppear(_ animated: Bool) {
-        super.viewWillAppear(animated)
-        requestExpandedPresentation(reason: "viewWillAppear")
-    }
-
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         requestExpandedPresentation(reason: "willBecomeActive")
@@ -117,15 +112,11 @@ class MessagesViewController: MSMessagesAppViewController {
         if recorder.isRecording {
             stopAndConvert()
         } else {
-            requestExpandedPresentation(reason: "recordTapped")
             beginRecording()
         }
     }
 
     private func beginRecording() {
-        // In an iMessage extension the implicit prompt from `AVAudioRecorder`
-        // often never fires, so request mic permission explicitly first and only
-        // record once granted. Order: permission → .expanded → record.
         let state = AudioRecorder.micPermission
         log.info("REC: permission state=\(String(describing: state))")
 
@@ -134,26 +125,15 @@ class MessagesViewController: MSMessagesAppViewController {
             startRecordingFlow()
         case .denied:
             log.error("REC: permission denied")
-            statusLabel.text = "Microphone access is off — enable it in Settings › voiceMix"
+            statusLabel.text = "Open the voiceMix app to enable microphone access"
         case .undetermined:
-            log.info("REC: requesting permission")
-            AudioRecorder.requestMicPermission { [weak self] granted in
-                // Delivered on the main actor by `requestMicPermission`.
-                guard let self else { return }
-                self.log.info("REC: permission granted=\(granted)")
-                if granted {
-                    self.startRecordingFlow()
-                } else {
-                    self.statusLabel.text = "Microphone access is off — enable it in Settings › voiceMix"
-                }
-            }
+            log.info("REC: permission undetermined")
+            statusLabel.text = "Open the voiceMix app to enable microphone access"
         }
     }
 
-    /// Permission is confirmed granted — expand the UI and start recording.
+    /// Permission is confirmed granted by the host app before recording.
     private func startRecordingFlow() {
-        requestExpandedPresentation(reason: "startRecordingFlow")
-
         readyClipURL = nil
         sendButton.isHidden = true
 
