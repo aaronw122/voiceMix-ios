@@ -1,6 +1,10 @@
 import Foundation
 
 /// Client-side-only stand-in for the convert backend. No bytes leave the device.
+///
+/// For the steel thread the mock echoes the user's *actual recording* back so
+/// playback feels real (untransformed) on-device. If the recording can't be
+/// found, it falls back to the bundled sample so the flow never breaks.
 struct MockConvertService: ConvertService {
     func convert(audioURL: URL, voiceId: String) async throws -> ConvertResponse {
         // Fake latency so the loading state is real.
@@ -8,22 +12,32 @@ struct MockConvertService: ConvertService {
         return ConvertResponse(
             url: "https://mock.voicemix.invalid/clip/123",
             title: "voiceMix sample",
-            // A dummy audioUrl the mock controls; fetchAudio ignores its value.
-            audioUrl: "https://mock.voicemix.invalid/audio/sample.mp3"
+            // Echo the recorded file back as a local file URL; fetchAudio copies it.
+            audioUrl: audioURL.absoluteString
         )
     }
 
     func fetchAudio(_ audioUrl: URL) async throws -> URL {
-        // Ignore the dummy URL; copy the bundled sample to a durable temp file.
-        guard let bundled = Bundle.main.url(forResource: "sample", withExtension: "mp3") else {
-            throw ConvertServiceError.missingBundledSample
-        }
+        let source = recordedFile(from: audioUrl) ?? bundledSample()
+
+        guard let source else { throw ConvertServiceError.missingBundledSample }
 
         let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("voiceMix-\(UUID().uuidString).mp3")
+            .appendingPathComponent("voiceMix-\(UUID().uuidString).\(source.pathExtension)")
 
         try? FileManager.default.removeItem(at: destination)
-        try FileManager.default.copyItem(at: bundled, to: destination)
+        try FileManager.default.copyItem(at: source, to: destination)
         return destination
+    }
+
+    /// The user's recording, if `audioUrl` points at an existing local file.
+    private func recordedFile(from audioUrl: URL) -> URL? {
+        guard audioUrl.isFileURL,
+              FileManager.default.fileExists(atPath: audioUrl.path) else { return nil }
+        return audioUrl
+    }
+
+    private func bundledSample() -> URL? {
+        Bundle.main.url(forResource: "sample", withExtension: "mp3")
     }
 }
