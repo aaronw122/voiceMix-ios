@@ -22,6 +22,8 @@ struct WaveformVideoRenderer {
         case writerSetupFailed
         case pixelBufferFailed
         case exportFailed(String)
+        case writerTimedOut
+        case appendFailed(String)
     }
 
     /// Video output dimensions and timing. The frame is static, so a low fps
@@ -52,7 +54,9 @@ struct WaveformVideoRenderer {
         do {
             let asset = AVURLAsset(url: audioURL)
             let duration = try await loadDuration(asset)
+            try Task.checkCancellation()
             let cover = await makeBestAvailableCover(for: asset)
+            try Task.checkCancellation()
             let url = try await renderVideo(audioURL: audioURL,
                                             duration: duration,
                                             cover: cover)
@@ -173,8 +177,7 @@ struct WaveformVideoRenderer {
     /// to 0...1. Returns nil/empty on any failure so the caller can fall back.
     private func waveformBars(from asset: AVURLAsset) async throws -> [CGFloat] {
         guard let audioTrack = try await firstAudioTrack(in: asset) else { return [] }
-        let amplitudes = try readPCMAmplitudes(from: asset, track: audioTrack)
-        return normalizedBars(from: amplitudes)
+        return try readPCMAmplitudes(from: asset, track: audioTrack)
     }
 
     private func firstAudioTrack(in asset: AVURLAsset) async throws -> AVAssetTrack? {
@@ -199,8 +202,8 @@ struct WaveformVideoRenderer {
         ]
     }
 
-    /// Read every audio sample as absolute amplitude in 0...1. Returns [] on
-    /// any reader failure so the caller can fall back.
+    /// Stream audio samples into a fixed number of buckets. Never retain
+    /// per-sample amplitudes; iMessage extensions have a tight memory budget.
     private func readPCMAmplitudes(from asset: AVURLAsset, track: AVAssetTrack) throws -> [CGFloat] {
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: linearPCMReaderSettings)
@@ -209,50 +212,55 @@ struct WaveformVideoRenderer {
         reader.add(output)
         guard reader.startReading() else { return [] }
 
-        var amplitudes: [CGFloat] = []
+        var sums = Array(repeating: CGFloat.zero, count: barCount)
+        var counts = Array(repeating: 0, count: barCount)
+        var sampleIndex = 0
+        let estimatedTotalSamples = max(estimatedSampleCount(for: track), barCount)
+
         while let sample = output.copyNextSampleBuffer() {
-            guard let block = CMSampleBufferGetDataBuffer(sample) else { continue }
-            let length = CMBlockBufferGetDataLength(block)
-            var data = Data(count: length)
-            data.withUnsafeMutableBytes { raw in
-                if let base = raw.baseAddress {
-                    CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: base)
+            autoreleasepool {
+                guard let block = CMSampleBufferGetDataBuffer(sample) else {
+                    CMSampleBufferInvalidate(sample)
+                    return
                 }
-            }
-            data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
-                let samples = raw.bindMemory(to: Int16.self)
-                for value in samples {
-                    amplitudes.append(CGFloat(abs(Int(value))) / CGFloat(Int16.max))
+                let length = CMBlockBufferGetDataLength(block)
+                var data = Data(count: length)
+                data.withUnsafeMutableBytes { raw in
+                    if let base = raw.baseAddress {
+                        CMBlockBufferCopyDataBytes(block, atOffset: 0, dataLength: length, destination: base)
+                    }
                 }
+                data.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+                    let samples = raw.bindMemory(to: Int16.self)
+                    for value in samples {
+                        let bucket = min(barCount - 1, sampleIndex * barCount / estimatedTotalSamples)
+                        sums[bucket] += CGFloat(abs(Int(value))) / CGFloat(Int16.max)
+                        counts[bucket] += 1
+                        sampleIndex += 1
+                    }
+                }
+                CMSampleBufferInvalidate(sample)
             }
-            CMSampleBufferInvalidate(sample)
         }
 
         guard reader.status == .completed || reader.status == .reading else { return [] }
-        return amplitudes
-    }
-
-    /// Turn raw per-sample amplitudes into normalized bar heights: average into
-    /// bars, then normalize so the loudest bar reaches full height.
-    private func normalizedBars(from amplitudes: [CGFloat]) -> [CGFloat] {
-        guard !amplitudes.isEmpty else { return [] }
-        let bars = averageAmplitudesIntoBars(amplitudes)
+        let bars = sums.enumerated().compactMap { index, sum -> CGFloat? in
+            guard counts[index] > 0 else { return nil }
+            return sum / CGFloat(counts[index])
+        }
         return normalizeBars(bars)
     }
 
-    /// Downsample to barCount buckets by averaging absolute amplitude.
-    private func averageAmplitudesIntoBars(_ amplitudes: [CGFloat]) -> [CGFloat] {
-        let chunk = max(amplitudes.count / barCount, 1)
-        var bars: [CGFloat] = []
-        var index = 0
-        while index < amplitudes.count && bars.count < barCount {
-            let end = min(index + chunk, amplitudes.count)
-            let slice = amplitudes[index..<end]
-            let avg = slice.reduce(0, +) / CGFloat(slice.count)
-            bars.append(avg)
-            index = end
+    private func estimatedSampleCount(for track: AVAssetTrack) -> Int {
+        let durationSeconds = max(CMTimeGetSeconds(track.timeRange.duration), 0)
+        var sampleRate = 44_100.0
+        if let description = track.formatDescriptions.first {
+            let audioDescription = description as! CMAudioFormatDescription
+            if let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(audioDescription) {
+                sampleRate = max(streamDescription.pointee.mSampleRate, 1)
+            }
         }
-        return bars
+        return max(Int(durationSeconds * sampleRate), 1)
     }
 
     /// Normalize so the loudest bar reaches full height.
@@ -287,28 +295,91 @@ struct WaveformVideoRenderer {
     private func renderVideo(audioURL: URL,
                              duration: CMTime,
                              cover: UIImage) async throws -> URL {
-        let videoOnlyURL = uniqueTempURL(suffix: "video", ext: "mp4")
-        try? FileManager.default.removeItem(at: videoOnlyURL)
-
-        // 1. Write a video-only track holding the static cover for the duration.
-        try await writeVideoTrack(cover: cover, duration: duration, to: videoOnlyURL)
-
-        // 2. Mux video + source audio into a final mp4 (re-encoded to AAC).
-        let outputURL = try await mux(videoURL: videoOnlyURL,
-                                      audioURL: audioURL,
-                                      duration: duration)
-
-        try? FileManager.default.removeItem(at: videoOnlyURL)
+        let outputURL = uniqueTempURL(suffix: "voiceMix", ext: "mp4")
+        try? FileManager.default.removeItem(at: outputURL)
+        do {
+            try await writeMovie(cover: cover,
+                                 audioURL: audioURL,
+                                 duration: duration,
+                                 to: outputURL)
+        } catch {
+            try? FileManager.default.removeItem(at: outputURL)
+            throw error
+        }
         return outputURL
     }
 
-    private func writeVideoTrack(cover: UIImage,
-                                 duration: CMTime,
-                                 to url: URL) async throws {
+    private func writeMovie(cover: UIImage,
+                            audioURL: URL,
+                            duration: CMTime,
+                            to url: URL) async throws {
+        log.info("RENDER: writeMovie entry")
         guard let cgImage = cover.cgImage else { throw RenderError.pixelBufferFailed }
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let videoInput = makeVideoInput()
+        let adaptor = makePixelBufferAdaptor(for: videoInput)
+        let audioAsset = AVURLAsset(url: audioURL)
+        guard let audioTrack = try await firstAudioTrack(in: audioAsset) else { throw RenderError.noAudioTrack }
+        try Task.checkCancellation()
+        let audioReader = try AVAssetReader(asset: audioAsset)
+        let audioOutput = AVAssetReaderTrackOutput(track: audioTrack, outputSettings: linearPCMReaderSettings)
+        audioOutput.alwaysCopiesSampleData = false
+        let audioInput = makeAudioInput()
 
+        guard writer.canAdd(videoInput), writer.canAdd(audioInput), audioReader.canAdd(audioOutput) else {
+            throw RenderError.writerSetupFailed
+        }
+        writer.add(videoInput)
+        writer.add(audioInput)
+        audioReader.add(audioOutput)
+
+        guard writer.startWriting() else {
+            throw RenderError.exportFailed(writer.error?.localizedDescription ?? "startWriting failed")
+        }
+        guard audioReader.startReading() else {
+            writer.cancelWriting()
+            throw RenderError.exportFailed(audioReader.error?.localizedDescription ?? "audio reader failed")
+        }
+        writer.startSession(atSourceTime: .zero)
+
+        guard let buffer = pixelBuffer(from: cgImage) else {
+            writer.cancelWriting()
+            throw RenderError.pixelBufferFailed
+        }
+
+        do {
+            try await writeVideoTrack(input: videoInput,
+                                      adaptor: adaptor,
+                                      buffer: buffer,
+                                      duration: duration,
+                                      writer: writer)
+            try await writeAudioTrack(reader: audioReader,
+                                      output: audioOutput,
+                                      input: audioInput,
+                                      writer: writer)
+        } catch {
+            log.error("RENDER: writeMovie cancel/fail \(error.localizedDescription)")
+            audioReader.cancelReading()
+            writer.cancelWriting()
+            throw error
+        }
+
+        if Task.isCancelled {
+            audioReader.cancelReading()
+            writer.cancelWriting()
+            throw CancellationError()
+        }
+        writer.endSession(atSourceTime: duration)
+        await writer.finishWriting()
+
+        if writer.status != .completed {
+            throw RenderError.exportFailed(writer.error?.localizedDescription ?? "movie write failed")
+        }
+        log.info("RENDER: writeMovie exit")
+    }
+
+    private func makeVideoInput() -> AVAssetWriterInput {
         let settings: [String: Any] = [
             AVVideoCodecKey: AVVideoCodecType.h264,
             AVVideoWidthKey: Int(VideoSpec.frameSize.width),
@@ -316,40 +387,90 @@ struct WaveformVideoRenderer {
         ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
+        return input
+    }
 
+    private func makePixelBufferAdaptor(for input: AVAssetWriterInput) -> AVAssetWriterInputPixelBufferAdaptor {
         let attrs: [String: Any] = [
             kCVPixelBufferPixelFormatTypeKey as String: Int(kCVPixelFormatType_32ARGB),
             kCVPixelBufferWidthKey as String: Int(VideoSpec.frameSize.width),
             kCVPixelBufferHeightKey as String: Int(VideoSpec.frameSize.height),
         ]
-        let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
-                                                           sourcePixelBufferAttributes: attrs)
+        return AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: input,
+                                                    sourcePixelBufferAttributes: attrs)
+    }
 
-        guard writer.canAdd(input) else { throw RenderError.writerSetupFailed }
-        writer.add(input)
+    private func makeAudioInput() -> AVAssetWriterInput {
+        let settings: [String: Any] = [
+            AVFormatIDKey: Int(kAudioFormatMPEG4AAC),
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000,
+        ]
+        let input = AVAssetWriterInput(mediaType: .audio, outputSettings: settings)
+        input.expectsMediaDataInRealTime = false
+        return input
+    }
 
-        guard writer.startWriting() else {
-            throw RenderError.exportFailed(writer.error?.localizedDescription ?? "startWriting failed")
-        }
-        writer.startSession(atSourceTime: .zero)
-
-        guard let buffer = pixelBuffer(from: cgImage) else {
-            throw RenderError.pixelBufferFailed
-        }
-
+    private func writeVideoTrack(input: AVAssetWriterInput,
+                                 adaptor: AVAssetWriterInputPixelBufferAdaptor,
+                                 buffer: CVPixelBuffer,
+                                 duration: CMTime,
+                                 writer: AVAssetWriter) async throws {
+        log.info("RENDER: writeVideoTrack entry")
         for presentationTime in staticFrameTimes(covering: duration) {
-            while !input.isReadyForMoreMediaData {
-                try await Task.sleep(nanoseconds: 5_000_000)
+            try Task.checkCancellation()
+            try await waitForInputReady(input, writer: writer)
+            guard adaptor.append(buffer, withPresentationTime: presentationTime) else {
+                let message = writer.error?.localizedDescription ?? "video append failed"
+                log.error("RENDER: video append failed \(message)")
+                writer.cancelWriting()
+                throw RenderError.appendFailed(message)
             }
-            adaptor.append(buffer, withPresentationTime: presentationTime)
         }
-
         input.markAsFinished()
-        writer.endSession(atSourceTime: duration)
-        await writer.finishWriting()
+        log.info("RENDER: writeVideoTrack exit")
+    }
 
-        if writer.status != .completed {
-            throw RenderError.exportFailed(writer.error?.localizedDescription ?? "video write failed")
+    private func writeAudioTrack(reader: AVAssetReader,
+                                 output: AVAssetReaderTrackOutput,
+                                 input: AVAssetWriterInput,
+                                 writer: AVAssetWriter) async throws {
+        log.info("RENDER: writeAudioTrack entry")
+        while let sample = output.copyNextSampleBuffer() {
+            try Task.checkCancellation()
+            try await waitForInputReady(input, writer: writer)
+            let appended = input.append(sample)
+            CMSampleBufferInvalidate(sample)
+            guard appended else {
+                let message = writer.error?.localizedDescription ?? "audio append failed"
+                log.error("RENDER: audio append failed \(message)")
+                writer.cancelWriting()
+                throw RenderError.appendFailed(message)
+            }
+        }
+        guard reader.status == .completed || reader.status == .reading else {
+            throw RenderError.exportFailed(reader.error?.localizedDescription ?? "audio read failed")
+        }
+        input.markAsFinished()
+        log.info("RENDER: writeAudioTrack exit")
+    }
+
+    private func waitForInputReady(_ input: AVAssetWriterInput,
+                                   writer: AVAssetWriter,
+                                   timeout: TimeInterval = 10) async throws {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !input.isReadyForMoreMediaData {
+            try Task.checkCancellation()
+            if writer.status == .failed {
+                throw RenderError.exportFailed(writer.error?.localizedDescription ?? "writer failed")
+            }
+            if Date() >= deadline {
+                log.error("RENDER: writer input timed out")
+                writer.cancelWriting()
+                throw RenderError.writerTimedOut
+            }
+            try await Task.sleep(nanoseconds: 5_000_000)
         }
     }
 
@@ -360,62 +481,6 @@ struct WaveformVideoRenderer {
         let durationSeconds = max(CMTimeGetSeconds(duration), VideoSpec.minimumDurationSeconds)
         let frameCount = max(Int(durationSeconds * Double(fps)), 2)
         return (0..<frameCount).map { CMTime(value: CMTimeValue($0), timescale: fps) }
-    }
-
-    private func mux(videoURL: URL,
-                     audioURL: URL,
-                     duration: CMTime) async throws -> URL {
-        let composition = AVMutableComposition()
-
-        let videoAsset = AVURLAsset(url: videoURL)
-        let audioAsset = AVURLAsset(url: audioURL)
-
-        let videoTracks: [AVAssetTrack]
-        let audioTracks: [AVAssetTrack]
-        if #available(iOS 16.0, *) {
-            videoTracks = try await videoAsset.loadTracks(withMediaType: .video)
-            audioTracks = try await audioAsset.loadTracks(withMediaType: .audio)
-        } else {
-            videoTracks = videoAsset.tracks(withMediaType: .video)
-            audioTracks = audioAsset.tracks(withMediaType: .audio)
-        }
-
-        guard let sourceVideo = videoTracks.first else { throw RenderError.noVideoTrack }
-        guard let sourceAudio = audioTracks.first else { throw RenderError.noAudioTrack }
-
-        let range = CMTimeRange(start: .zero, duration: duration)
-
-        if let compVideo = composition.addMutableTrack(withMediaType: .video,
-                                                       preferredTrackID: kCMPersistentTrackID_Invalid) {
-            try compVideo.insertTimeRange(range, of: sourceVideo, at: .zero)
-        }
-        if let compAudio = composition.addMutableTrack(withMediaType: .audio,
-                                                       preferredTrackID: kCMPersistentTrackID_Invalid) {
-            try compAudio.insertTimeRange(range, of: sourceAudio, at: .zero)
-        }
-
-        let outputURL = uniqueTempURL(suffix: "voiceMix", ext: "mp4")
-        try? FileManager.default.removeItem(at: outputURL)
-
-        // Re-encode (NOT passthrough) so mp3/m4a source audio becomes AAC in mp4.
-        guard let export = AVAssetExportSession(asset: composition,
-                                                presetName: AVAssetExportPresetMediumQuality) else {
-            throw RenderError.exportFailed("could not create export session")
-        }
-        export.outputURL = outputURL
-        export.outputFileType = .mp4
-        export.shouldOptimizeForNetworkUse = true
-
-        if #available(iOS 18.0, *) {
-            try await export.export(to: outputURL, as: .mp4)
-        } else {
-            await export.export()
-            if export.status != .completed {
-                throw RenderError.exportFailed(export.error?.localizedDescription ?? "export failed")
-            }
-        }
-
-        return outputURL
     }
 
     // MARK: - Pixel buffer

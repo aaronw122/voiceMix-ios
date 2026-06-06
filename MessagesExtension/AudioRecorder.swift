@@ -5,8 +5,12 @@ import AVFoundation
 /// Configures and activates the audio session before recording — the default
 /// iOS session permits playback but not recording.
 final class AudioRecorder: NSObject {
+    static let maxDurationSeconds: TimeInterval = 15
+
     private var recorder: AVAudioRecorder?
+    private var maxDurationTimer: Timer?
     private(set) var fileURL: URL?
+    var didReachMaxDuration: ((URL?) -> Void)?
 
     var isRecording: Bool { recorder?.isRecording ?? false }
 
@@ -34,11 +38,14 @@ final class AudioRecorder: NSObject {
 
         self.recorder = recorder
         self.fileURL = url
+        scheduleMaxDurationTimer()
     }
 
     /// Stops recording and returns the finished file URL.
     @discardableResult
     func stopRecording() -> URL? {
+        maxDurationTimer?.invalidate()
+        maxDurationTimer = nil
         recorder?.stop()
         let url = fileURL
         recorder = nil
@@ -49,6 +56,16 @@ final class AudioRecorder: NSObject {
 
     enum RecorderError: Error {
         case failedToStart
+    }
+
+    private func scheduleMaxDurationTimer() {
+        maxDurationTimer?.invalidate()
+        maxDurationTimer = Timer.scheduledTimer(withTimeInterval: Self.maxDurationSeconds,
+                                                repeats: false) { [weak self] _ in
+            guard let self, self.isRecording else { return }
+            let url = self.stopRecording()
+            self.didReachMaxDuration?(url)
+        }
     }
 
     // MARK: - Microphone permission
