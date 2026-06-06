@@ -141,7 +141,7 @@ class MessagesViewController: MSMessagesAppViewController {
             try recorder.startRecording()
             log.info("REC: startRecording success")
             recordButton.configuration?.title = "Stop"
-            statusLabel.text = "Recording… (15s max)"
+            statusLabel.text = "Recording… (\(Int(AudioRecorder.maxDurationSeconds))s max)"
         } catch {
             log.error("REC: startRecording threw \(error.localizedDescription)")
             statusLabel.text = "Couldn't start recording"

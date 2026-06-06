@@ -5,7 +5,7 @@ import AVFoundation
 /// Configures and activates the audio session before recording — the default
 /// iOS session permits playback but not recording.
 final class AudioRecorder: NSObject {
-    static let maxDurationSeconds: TimeInterval = 15
+    static let maxDurationSeconds: TimeInterval = 60
 
     private var recorder: AVAudioRecorder?
     private var maxDurationTimer: Timer?
