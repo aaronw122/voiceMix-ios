@@ -12,7 +12,8 @@ class MessagesViewController: MSMessagesAppViewController {
     private let service: ConvertService = Config.useMock ? MockConvertService() : LiveConvertService()
     private let recorder = AudioRecorder()
 
-    /// The local MP3 ready to be inserted into the compose field.
+    /// The local mp4 (audio muxed under a cover) ready to be inserted into the
+    /// compose field — renders as an inline media bubble in the transcript.
     private var readyClipURL: URL?
 
     // MARK: - UI
@@ -117,8 +118,11 @@ class MessagesViewController: MSMessagesAppViewController {
                     throw ConvertServiceError.invalidAudioURL
                 }
                 let localMP3 = try await service.fetchAudio(audioUrl)
+                // Presentation step: wrap the audio in an mp4 so Messages renders
+                // an inline media bubble that plays in the transcript.
+                let mp4 = try await WaveformVideoRenderer().makeVideo(fromAudio: localMP3)
                 await MainActor.run {
-                    self.readyClipURL = localMP3
+                    self.readyClipURL = mp4
                     self.setLoading(false, message: "Ready — tap Send")
                     self.sendButton.isHidden = false
                 }
@@ -140,7 +144,7 @@ class MessagesViewController: MSMessagesAppViewController {
         statusLabel.text = "Inserting…"
 
         // `insertAttachment` is async — handle completion and update UI on main.
-        conversation.insertAttachment(clipURL, withAlternateFilename: "voiceMix.mp3") { [weak self] error in
+        conversation.insertAttachment(clipURL, withAlternateFilename: "voiceMix.mp4") { [weak self] error in
             Task { @MainActor in
                 guard let self else { return }
                 self.sendButton.isEnabled = true
