@@ -57,13 +57,9 @@ enum VoiceCatalogPreflight {
                 log.error("PREFLIGHT: engine drift for '\(persona.voiceId)': local=\(persona.engine.rawValue) server=\(server.engine)")
                 assertionFailure("Engine drift for '\(persona.voiceId)': local=\(persona.engine.rawValue) server=\(server.engine)")
             }
-            // Phase-1 voices are all elevenlabs (acceptsText == false). A modal
-            // voice in the catalog would require acceptsText == true.
-            let expectedAcceptsText = (persona.engine == .modal)
-            if server.acceptsText != expectedAcceptsText {
-                log.error("PREFLIGHT: acceptsText drift for '\(persona.voiceId)': expected=\(expectedAcceptsText) server=\(server.acceptsText)")
-                assertionFailure("acceptsText drift for '\(persona.voiceId)'")
-            }
+            // We only assert id-exists + engine match. `acceptsText` is purely a
+            // backend hint about text input; the client always sends audio, so it
+            // is not part of our contract and varies independently server-side.
         }
         log.info("PREFLIGHT: catalog matches server /voices")
     }
