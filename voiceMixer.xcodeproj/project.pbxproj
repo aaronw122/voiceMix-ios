@@ -12,14 +12,8 @@
 		865FC2073D3925365D521828 /* voiceMixerMessages.appex in Embed Foundation Extensions */ = {isa = PBXBuildFile; fileRef = E6C13A6C87CC73CD0FE5734E /* voiceMixerMessages.appex */; settings = {ATTRIBUTES = (RemoveHeadersOnCopy, ); }; };
 		AA01000000000000000000B1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA01000000000000000000A1 /* Assets.xcassets */; };
 		AA02000000000000000000B2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA02000000000000000000A2 /* Assets.xcassets */; };
-		BB01000000000000000000B1 /* Config.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB01000000000000000000A1 /* Config.swift */; };
-		BB02000000000000000000B1 /* ConvertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB02000000000000000000A1 /* ConvertService.swift */; };
-		BB03000000000000000000B1 /* MockConvertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB03000000000000000000A1 /* MockConvertService.swift */; };
-		BB04000000000000000000B1 /* AudioRecorder.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB04000000000000000000A1 /* AudioRecorder.swift */; };
-		BB05000000000000000000B1 /* LiveConvertService.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB05000000000000000000A1 /* LiveConvertService.swift */; };
 		BB06000000000000000000B1 /* sample.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = BB06000000000000000000A1 /* sample.mp3 */; };
-		BB07000000000000000000B1 /* WaveformVideoRenderer.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB07000000000000000000A1 /* WaveformVideoRenderer.swift */; };
-		BB08000000000000000000B1 /* VoiceTransformView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB08000000000000000000A1 /* VoiceTransformView.swift */; };
+		CC01000000000000000000B1 /* VoiceMixCore in Frameworks */ = {isa = PBXBuildFile; productRef = CC01000000000000000000C1 /* VoiceMixCore */; };
 		C24E0BEEC3C71A60E9E6D8B0 /* MessagesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */; };
 /* End PBXBuildFile section */
 
@@ -47,20 +41,24 @@
 		};
 /* End PBXCopyFilesBuildPhase section */
 
+/* Begin PBXFrameworksBuildPhase section */
+		CC01000000000000000000F1 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				CC01000000000000000000B1 /* VoiceMixCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
 /* Begin PBXFileReference section */
 		0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MessagesViewController.swift; sourceTree = "<group>"; };
 		48BD8DC0DE2968F1904063C8 /* voiceMixerApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = voiceMixerApp.swift; sourceTree = "<group>"; };
 		8348741E11F92917B314A746 /* voiceMixer.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = voiceMixer.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AA01000000000000000000A1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA02000000000000000000A2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
-		BB01000000000000000000A1 /* Config.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Config.swift; sourceTree = "<group>"; };
-		BB02000000000000000000A1 /* ConvertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ConvertService.swift; sourceTree = "<group>"; };
-		BB03000000000000000000A1 /* MockConvertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MockConvertService.swift; sourceTree = "<group>"; };
-		BB04000000000000000000A1 /* AudioRecorder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AudioRecorder.swift; sourceTree = "<group>"; };
-		BB05000000000000000000A1 /* LiveConvertService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LiveConvertService.swift; sourceTree = "<group>"; };
 		BB06000000000000000000A1 /* sample.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = sample.mp3; sourceTree = "<group>"; };
-		BB07000000000000000000A1 /* WaveformVideoRenderer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WaveformVideoRenderer.swift; sourceTree = "<group>"; };
-		BB08000000000000000000A1 /* VoiceTransformView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VoiceTransformView.swift; sourceTree = "<group>"; };
 		D1EFA29EF7F844D5EDE2B0CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E6C13A6C87CC73CD0FE5734E /* voiceMixerMessages.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = voiceMixerMessages.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE561D6569FFA338D5DC6BAF /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/MainInterface.storyboard; sourceTree = "<group>"; };
@@ -82,13 +80,6 @@
 			children = (
 				D1EFA29EF7F844D5EDE2B0CD /* Info.plist */,
 				0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */,
-				BB01000000000000000000A1 /* Config.swift */,
-				BB02000000000000000000A1 /* ConvertService.swift */,
-				BB03000000000000000000A1 /* MockConvertService.swift */,
-				BB04000000000000000000A1 /* AudioRecorder.swift */,
-				BB05000000000000000000A1 /* LiveConvertService.swift */,
-				BB07000000000000000000A1 /* WaveformVideoRenderer.swift */,
-				BB08000000000000000000A1 /* VoiceTransformView.swift */,
 				BB06000000000000000000A1 /* sample.mp3 */,
 				00E96CFBA39EC3A302467EBE /* MainInterface.storyboard */,
 				AA02000000000000000000A2 /* Assets.xcassets */,
@@ -123,6 +114,7 @@
 			buildConfigurationList = D2416AF6F5A3337A5996DC49 /* Build configuration list for PBXNativeTarget "voiceMixerMessages" */;
 			buildPhases = (
 				D9AA9C3B2A3E63B4EBC18B0B /* Sources */,
+				CC01000000000000000000F1 /* Frameworks */,
 				A161DDEC0B75B3A2F9F53C3F /* Resources */,
 			);
 			buildRules = (
@@ -131,6 +123,7 @@
 			);
 			name = voiceMixerMessages;
 			packageProductDependencies = (
+				CC01000000000000000000C1 /* VoiceMixCore */,
 			);
 			productName = voiceMixerMessages;
 			productReference = E6C13A6C87CC73CD0FE5734E /* voiceMixerMessages.appex */;
@@ -182,6 +175,9 @@
 			);
 			mainGroup = CB59FD159A9F6C72DD7231F7;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				CC01000000000000000000D1 /* XCLocalSwiftPackageReference "VoiceMixCore" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 58EC67D192403837AB2B9165 /* Products */;
 			projectDirPath = "";
@@ -228,13 +224,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				C24E0BEEC3C71A60E9E6D8B0 /* MessagesViewController.swift in Sources */,
-				BB01000000000000000000B1 /* Config.swift in Sources */,
-				BB02000000000000000000B1 /* ConvertService.swift in Sources */,
-				BB03000000000000000000B1 /* MockConvertService.swift in Sources */,
-				BB04000000000000000000B1 /* AudioRecorder.swift in Sources */,
-				BB05000000000000000000B1 /* LiveConvertService.swift in Sources */,
-				BB07000000000000000000B1 /* WaveformVideoRenderer.swift in Sources */,
-				BB08000000000000000000B1 /* VoiceTransformView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -343,6 +332,8 @@
 		67565066CC9106190D4C6A0B /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				API_BASE_URL = "https://voiceapi.awill.co";
+				APPLICATION_EXTENSION_API_ONLY = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MessagesExtension/Info.plist;
@@ -360,6 +351,8 @@
 		964BC5A45BA7B101AEC127D7 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				API_BASE_URL = "https://voiceapi.awill.co";
+				APPLICATION_EXTENSION_API_ONLY = YES;
 				ASSETCATALOG_COMPILER_APPICON_NAME = "iMessage App Icon";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = MessagesExtension/Info.plist;
@@ -492,6 +485,20 @@
 			defaultConfigurationName = Debug;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		CC01000000000000000000D1 /* XCLocalSwiftPackageReference "VoiceMixCore" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = VoiceMixCore;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		CC01000000000000000000C1 /* VoiceMixCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			productName = VoiceMixCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = E0A5607A537AB14476CAE07D /* Project object */;
 }

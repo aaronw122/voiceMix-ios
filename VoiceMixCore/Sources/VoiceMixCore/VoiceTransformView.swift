@@ -2,42 +2,8 @@ import SwiftUI
 import AVFoundation
 import os
 
-struct VoicePersona: Identifiable, Equatable {
-    let id: String
-    let name: String
-    let monogram: String
-    let color1: Color
-    let color2: Color
-    let uiColor1: UIColor
-    let uiColor2: UIColor
-
-    static let all: [VoicePersona] = [
-        VoicePersona(id: "elder",
-                     name: "The Elder",
-                     monogram: "E",
-                     color1: Color(hex: 0xF7B733),
-                     color2: Color(hex: 0xFC4A1A),
-                     uiColor1: UIColor(hex: 0xF7B733),
-                     uiColor2: UIColor(hex: 0xFC4A1A)),
-        VoicePersona(id: "aria",
-                     name: "Aria",
-                     monogram: "A",
-                     color1: Color(hex: 0xF857A6),
-                     color2: Color(hex: 0x9B5CF6),
-                     uiColor1: UIColor(hex: 0xF857A6),
-                     uiColor2: UIColor(hex: 0x9B5CF6)),
-        VoicePersona(id: "mlk",
-                     name: "M.L.K.",
-                     monogram: "M",
-                     color1: Color(hex: 0x36D1DC),
-                     color2: Color(hex: 0x5B86E5),
-                     uiColor1: UIColor(hex: 0x36D1DC),
-                     uiColor2: UIColor(hex: 0x5B86E5)),
-    ]
-}
-
 @MainActor
-final class VoiceTransformViewModel: NSObject, ObservableObject {
+public final class VoiceTransformViewModel: NSObject, ObservableObject {
     enum Step {
         case persona
         case record
@@ -60,8 +26,8 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var isSending = false
 
-    var onDismiss: (() -> Void)?
-    var onInsert: ((URL, @escaping (Error?) -> Void) -> Void)?
+    public var onDismiss: (() -> Void)?
+    public var onInsert: ((URL, @escaping (Error?) -> Void) -> Void)?
 
     private let log = Logger(subsystem: "com.aaron.voiceMixer", category: "flow")
     private let service: ConvertService
@@ -73,6 +39,9 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
     private var playbackTimer: Timer?
     private var audioPlayer: AVAudioPlayer?
     private var preparedClip: PreparedClip?
+    /// Last successful recording, retained only after a transient conversion
+    /// failure so the user can retry without re-recording.
+    private var lastRecordedURL: URL?
     private var statusIndex = 0
 
     private let transformStatuses = [
@@ -82,7 +51,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
         "Rendering new audio…",
     ]
 
-    init(service: ConvertService, recorder: AudioRecorder = AudioRecorder()) {
+    public init(service: ConvertService, recorder: AudioRecorder = AudioRecorder()) {
         self.service = service
         self.recorder = recorder
         super.init()
@@ -102,7 +71,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
         audioPlayer?.stop()
     }
 
-    func cancel() {
+    public func cancel() {
         stopPlayback()
         cancelConversion()
         if isRecording {
@@ -117,8 +86,9 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
         seedWaveform()
     }
 
-    func goBack() {
+    public func goBack() {
         stopPlayback()
+        lastRecordedURL = nil
         switch step {
         case .persona:
             cancel()
@@ -141,12 +111,21 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     func recordButtonTapped() {
-        isRecording ? stopAndConvert() : beginRecording()
+        if isRecording {
+            stopAndConvert()
+        } else if let retryURL = lastRecordedURL {
+            // Retry the previous recording after a transient failure.
+            lastRecordedURL = nil
+            startConversion(from: retryURL)
+        } else {
+            beginRecording()
+        }
     }
 
     func redo() {
         stopPlayback()
         preparedClip = nil
+        lastRecordedURL = nil
         step = .record
         statusLine = "Tap to record"
         seedWaveform()
@@ -277,15 +256,53 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
             } catch {
                 self.log.error("CONVERT: failed \(String(describing: error))")
                 self.stopStatusTimer()
-                self.step = .record
-                self.statusLine = "Convert failed"
+                self.handleConversionFailure(error, recordedURL: recordedURL)
                 self.conversionTask = nil
             }
         }
     }
 
+    /// Maps a `ConvertServiceError` to distinct user-visible copy. On transient
+    /// failures (502 / network) we KEEP the selected persona and the recorded
+    /// clip so the user can retry by tapping record again, rather than being
+    /// dropped silently back to an empty record screen.
+    private func handleConversionFailure(_ error: Error, recordedURL: URL) {
+        let transient: Bool
+        switch error {
+        case ConvertServiceError.httpStatus(404, _):
+            statusLine = "Voice unavailable — try another"
+            transient = false
+        case ConvertServiceError.httpStatus(413, _),
+             ConvertServiceError.httpStatus(422, _),
+             ConvertServiceError.fileTooLarge:
+            statusLine = "Recording too long or large"
+            transient = false
+        case ConvertServiceError.httpStatus(502, _),
+             ConvertServiceError.httpStatus(503, _):
+            statusLine = "Voice engine busy — tap to retry"
+            transient = true
+        case ConvertServiceError.network:
+            statusLine = "No connection — tap to retry"
+            transient = true
+        case ConvertServiceError.httpStatus(let code, _):
+            statusLine = "Convert failed (\(code))"
+            transient = false
+        default:
+            statusLine = "Convert failed"
+            transient = false
+        }
+
+        // Always return to the record screen so the user can act on the status.
+        // The persona is never reset here. On transient failures we keep the
+        // last recording around so a retry doesn't require re-recording.
+        lastRecordedURL = transient ? recordedURL : nil
+        step = .record
+    }
+
     private func prepareClip(from recordedURL: URL) async throws -> PreparedClip {
-        let response = try await service.convert(audioURL: recordedURL, voiceId: selectedPersona.id)
+        let response = try await service.convert(audioURL: recordedURL,
+                                                 voiceId: selectedPersona.voiceId,
+                                                 engine: selectedPersona.engine)
         try Task.checkCancellation()
         guard let audioUrl = URL(string: response.audioUrl) else {
             throw ConvertServiceError.invalidAudioURL
@@ -399,7 +416,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
 }
 
 extension VoiceTransformViewModel: AVAudioPlayerDelegate {
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    nonisolated public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
             playbackTimer?.invalidate()
             playbackTimer = nil
@@ -414,10 +431,14 @@ extension VoiceTransformViewModel: AVAudioPlayerDelegate {
     }
 }
 
-struct VoiceTransformView: View {
+public struct VoiceTransformView: View {
     @ObservedObject var model: VoiceTransformViewModel
 
-    var body: some View {
+    public init(model: VoiceTransformViewModel) {
+        self.model = model
+    }
+
+    public var body: some View {
         ZStack {
             LinearGradient(colors: [Color(hex: 0x161619), Color(hex: 0x0C0C0E)],
                            startPoint: .top,
@@ -541,52 +562,70 @@ struct VoiceTransformView: View {
             let cardWidth: CGFloat = 124
             let sidePadding = max(0, (geo.size.width - cardWidth) / 2)
             if #available(iOS 17.0, *) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(VoicePersona.all) { persona in
-                            personaButton(persona)
-                                .frame(width: cardWidth)
-                                .id(persona.id)
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.horizontal, sidePadding)
-                    .padding(.vertical, 14)
-                }
-                .scrollContentBackground(.hidden)
-                .scrollTargetBehavior(.viewAligned)
-                .scrollPosition(id: Binding(
-                    get: { model.selectedPersona.id },
-                    set: { newID in
-                        if let newID, let persona = VoicePersona.all.first(where: { $0.id == newID }) {
-                            model.selectedPersona = persona
-                        }
-                    }
-                ))
+                snapCarousel(cardWidth: cardWidth, sidePadding: sidePadding)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(VoicePersona.all) { persona in
-                                personaButton(persona)
-                                    .frame(width: cardWidth)
-                                    .id(persona.id)
-                            }
-                        }
-                        .padding(.horizontal, sidePadding)
-                        .padding(.vertical, 14)
-                    }
-                    .scrollContentBackground(.hidden)
-                    .onAppear { proxy.scrollTo(model.selectedPersona.id, anchor: .center) }
-                    .onChange(of: model.selectedPersona) { _ in
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo(model.selectedPersona.id, anchor: .center)
-                        }
-                    }
-                }
+                legacyCarousel(cardWidth: cardWidth, sidePadding: sidePadding)
             }
         }
         .frame(height: 156)
+    }
+
+    @available(iOS 17.0, *)
+    private func snapCarousel(cardWidth: CGFloat, sidePadding: CGFloat) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(VoicePersona.all) { persona in
+                    personaButton(persona)
+                        .frame(width: cardWidth)
+                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            let distance = min(abs(phase.value), 1)
+                            return content
+                                .scaleEffect(1 - distance * 0.2)
+                                .opacity(1 - distance * 0.5)
+                        }
+                        .id(persona.id)
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal, sidePadding)
+            .padding(.vertical, 14)
+        }
+        .scrollContentBackground(.hidden)
+        .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+        .scrollPosition(id: Binding(
+            get: { model.selectedPersona.id },
+            set: { newID in
+                if let newID, let persona = VoicePersona.all.first(where: { $0.id == newID }) {
+                    model.selectedPersona = persona
+                }
+            }
+        ))
+    }
+
+    private func legacyCarousel(cardWidth: CGFloat, sidePadding: CGFloat) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(VoicePersona.all) { persona in
+                        personaButton(persona)
+                            .frame(width: cardWidth)
+                            .scaleEffect(model.selectedPersona == persona ? 1 : 0.8)
+                            .opacity(model.selectedPersona == persona ? 1 : 0.5)
+                            .animation(.easeOut(duration: 0.25), value: model.selectedPersona)
+                            .id(persona.id)
+                    }
+                }
+                .padding(.horizontal, sidePadding)
+                .padding(.vertical, 14)
+            }
+            .scrollContentBackground(.hidden)
+            .onAppear { proxy.scrollTo(model.selectedPersona.id, anchor: .center) }
+            .onChange(of: model.selectedPersona) { _ in
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo(model.selectedPersona.id, anchor: .center)
+                }
+            }
+        }
     }
 
     private func personaButton(_ persona: VoicePersona) -> some View {
@@ -600,9 +639,6 @@ struct VoiceTransformView: View {
                     .font(.system(size: 15, weight: selected ? .bold : .medium))
                     .foregroundStyle(selected ? .white : .white.opacity(0.55))
             }
-            .scaleEffect(selected ? 1 : 0.8)
-            .opacity(selected ? 1 : 0.5)
-            .animation(.easeOut(duration: 0.25), value: selected)
         }
         .buttonStyle(.plain)
     }
@@ -896,19 +932,6 @@ struct NeonWaveformView: View {
     }
 }
 
-private extension Color {
-    init(hex: UInt32) {
-        self.init(red: Double((hex >> 16) & 0xff) / 255,
-                  green: Double((hex >> 8) & 0xff) / 255,
-                  blue: Double(hex & 0xff) / 255)
-    }
-}
-
-private extension UIColor {
-    convenience init(hex: UInt32) {
-        self.init(red: CGFloat((hex >> 16) & 0xff) / 255,
-                  green: CGFloat((hex >> 8) & 0xff) / 255,
-                  blue: CGFloat(hex & 0xff) / 255,
-                  alpha: 1)
-    }
+#Preview {
+    VoiceTransformView(model: VoiceTransformViewModel(service: MockConvertService()))
 }

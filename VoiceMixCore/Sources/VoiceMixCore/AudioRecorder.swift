@@ -4,7 +4,9 @@ import AVFoundation
 /// Thin wrapper over `AVAudioRecorder` that writes AAC `.m4a` to a temp file.
 /// Configures and activates the audio session before recording — the default
 /// iOS session permits playback but not recording.
-final class AudioRecorder: NSObject {
+public final class AudioRecorder: NSObject {
+    public override init() { super.init() }
+
     static let maxDurationSeconds: TimeInterval = 60
 
     private var recorder: AVAudioRecorder?
