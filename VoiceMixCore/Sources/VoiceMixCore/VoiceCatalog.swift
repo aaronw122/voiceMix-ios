@@ -31,9 +31,26 @@ struct VoicePersona: Identifiable, Equatable {
     let uiColor1: UIColor
     let uiColor2: UIColor
 
-    /// Phase-1 lineup: the three elevenlabs voices that already exist
-    /// server-side. Trump/Obama (modal) are intentionally absent until the
-    /// backend ships them in phase 2, otherwise their tiles would 404.
+    private init(id: String,
+                 voiceId: String,
+                 engine: VoiceEngine,
+                 name: String,
+                 tag: String,
+                 monogram: String,
+                 hex1: UInt32,
+                 hex2: UInt32) {
+        self.id = id
+        self.voiceId = voiceId
+        self.engine = engine
+        self.name = name
+        self.tag = tag
+        self.monogram = monogram
+        self.color1 = Color(hex: hex1)
+        self.color2 = Color(hex: hex2)
+        self.uiColor1 = UIColor(hex: hex1)
+        self.uiColor2 = UIColor(hex: hex2)
+    }
+
     static let all: [VoicePersona] = [
         VoicePersona(id: "femme-fatale",
                      voiceId: "femme-fatale",
@@ -41,60 +58,48 @@ struct VoicePersona: Identifiable, Equatable {
                      name: "Femme Fatale",
                      tag: "Sultry · smoky · poised",
                      monogram: "F",
-                     color1: Color(hex: 0xB24592),
-                     color2: Color(hex: 0x4A1942),
-                     uiColor1: UIColor(hex: 0xB24592),
-                     uiColor2: UIColor(hex: 0x4A1942)),
+                     hex1: 0xB24592,
+                     hex2: 0x4A1942),
         VoicePersona(id: "trump",
                      voiceId: "trump",
                      engine: .modal,
                      name: "Trump",
                      tag: "Brash · bold · unmistakable",
                      monogram: "T",
-                     color1: Color(hex: 0xE63946),
-                     color2: Color(hex: 0xF6A21D),
-                     uiColor1: UIColor(hex: 0xE63946),
-                     uiColor2: UIColor(hex: 0xF6A21D)),
+                     hex1: 0xE63946,
+                     hex2: 0xF6A21D),
         VoicePersona(id: "obama",
                      voiceId: "obama",
                      engine: .modal,
                      name: "Obama",
                      tag: "Measured · resonant · calm",
                      monogram: "O",
-                     color1: Color(hex: 0x2193B0),
-                     color2: Color(hex: 0x6DD5ED),
-                     uiColor1: UIColor(hex: 0x2193B0),
-                     uiColor2: UIColor(hex: 0x6DD5ED)),
+                     hex1: 0x2193B0,
+                     hex2: 0x6DD5ED),
         VoicePersona(id: "queen-elizabeth",
                      voiceId: "queen_elizabeth",
                      engine: .modal,
                      name: "Queen Elizabeth",
                      tag: "Regal · precise · composed",
                      monogram: "Q",
-                     color1: Color(hex: 0x8E2DE2),
-                     color2: Color(hex: 0x4A00E0),
-                     uiColor1: UIColor(hex: 0x8E2DE2),
-                     uiColor2: UIColor(hex: 0x4A00E0)),
+                     hex1: 0x8E2DE2,
+                     hex2: 0x4A00E0),
         VoicePersona(id: "young-woman",
                      voiceId: "young-woman",
                      engine: .elevenlabs,
                      name: "Young Woman",
                      tag: "Bright · clear · youthful",
                      monogram: "Y",
-                     color1: Color(hex: 0xF857A6),
-                     color2: Color(hex: 0x9B5CF6),
-                     uiColor1: UIColor(hex: 0xF857A6),
-                     uiColor2: UIColor(hex: 0x9B5CF6)),
+                     hex1: 0xF857A6,
+                     hex2: 0x9B5CF6),
         VoicePersona(id: "old-man",
                      voiceId: "old-man",
                      engine: .elevenlabs,
                      name: "Old Man",
                      tag: "Weathered · warm · unhurried",
                      monogram: "O",
-                     color1: Color(hex: 0xF7B733),
-                     color2: Color(hex: 0xFC4A1A),
-                     uiColor1: UIColor(hex: 0xF7B733),
-                     uiColor2: UIColor(hex: 0xFC4A1A)),
+                     hex1: 0xF7B733,
+                     hex2: 0xFC4A1A),
     ]
 }
 
