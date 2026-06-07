@@ -2,6 +2,7 @@ import UIKit
 import SwiftUI
 import Messages
 import os
+import VoiceMixCore
 
 final class MessagesViewController: MSMessagesAppViewController {
 

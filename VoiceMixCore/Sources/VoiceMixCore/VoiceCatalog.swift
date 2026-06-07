@@ -5,7 +5,7 @@ import SwiftUI
 /// The backend rejects the wrong pairing with a 422, so this is load-bearing,
 /// not cosmetic: `.elevenlabs` voices go to `POST /convert`, `.modal` voices
 /// go to `POST /impersonate`.
-enum VoiceEngine: String, Equatable {
+public enum VoiceEngine: String, Equatable {
     case elevenlabs
     case modal
 }
@@ -35,26 +35,6 @@ struct VoicePersona: Identifiable, Equatable {
     /// server-side. Trump/Obama (modal) are intentionally absent until the
     /// backend ships them in phase 2, otherwise their tiles would 404.
     static let all: [VoicePersona] = [
-        VoicePersona(id: "old-man",
-                     voiceId: "old-man",
-                     engine: .elevenlabs,
-                     name: "Old Man",
-                     tag: "Weathered · warm · unhurried",
-                     monogram: "O",
-                     color1: Color(hex: 0xF7B733),
-                     color2: Color(hex: 0xFC4A1A),
-                     uiColor1: UIColor(hex: 0xF7B733),
-                     uiColor2: UIColor(hex: 0xFC4A1A)),
-        VoicePersona(id: "young-woman",
-                     voiceId: "young-woman",
-                     engine: .elevenlabs,
-                     name: "Young Woman",
-                     tag: "Bright · clear · youthful",
-                     monogram: "Y",
-                     color1: Color(hex: 0xF857A6),
-                     color2: Color(hex: 0x9B5CF6),
-                     uiColor1: UIColor(hex: 0xF857A6),
-                     uiColor2: UIColor(hex: 0x9B5CF6)),
         VoicePersona(id: "femme-fatale",
                      voiceId: "femme-fatale",
                      engine: .elevenlabs,
@@ -95,6 +75,26 @@ struct VoicePersona: Identifiable, Equatable {
                      color2: Color(hex: 0x4A00E0),
                      uiColor1: UIColor(hex: 0x8E2DE2),
                      uiColor2: UIColor(hex: 0x4A00E0)),
+        VoicePersona(id: "young-woman",
+                     voiceId: "young-woman",
+                     engine: .elevenlabs,
+                     name: "Young Woman",
+                     tag: "Bright · clear · youthful",
+                     monogram: "Y",
+                     color1: Color(hex: 0xF857A6),
+                     color2: Color(hex: 0x9B5CF6),
+                     uiColor1: UIColor(hex: 0xF857A6),
+                     uiColor2: UIColor(hex: 0x9B5CF6)),
+        VoicePersona(id: "old-man",
+                     voiceId: "old-man",
+                     engine: .elevenlabs,
+                     name: "Old Man",
+                     tag: "Weathered · warm · unhurried",
+                     monogram: "O",
+                     color1: Color(hex: 0xF7B733),
+                     color2: Color(hex: 0xFC4A1A),
+                     uiColor1: UIColor(hex: 0xF7B733),
+                     uiColor2: UIColor(hex: 0xFC4A1A)),
     ]
 }
 

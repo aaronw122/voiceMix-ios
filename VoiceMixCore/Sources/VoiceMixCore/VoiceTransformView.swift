@@ -3,7 +3,7 @@ import AVFoundation
 import os
 
 @MainActor
-final class VoiceTransformViewModel: NSObject, ObservableObject {
+public final class VoiceTransformViewModel: NSObject, ObservableObject {
     enum Step {
         case persona
         case record
@@ -26,8 +26,8 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
     @Published var isPlaying = false
     @Published var isSending = false
 
-    var onDismiss: (() -> Void)?
-    var onInsert: ((URL, @escaping (Error?) -> Void) -> Void)?
+    public var onDismiss: (() -> Void)?
+    public var onInsert: ((URL, @escaping (Error?) -> Void) -> Void)?
 
     private let log = Logger(subsystem: "com.aaron.voiceMixer", category: "flow")
     private let service: ConvertService
@@ -51,7 +51,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
         "Rendering new audio…",
     ]
 
-    init(service: ConvertService, recorder: AudioRecorder = AudioRecorder()) {
+    public init(service: ConvertService, recorder: AudioRecorder = AudioRecorder()) {
         self.service = service
         self.recorder = recorder
         super.init()
@@ -71,7 +71,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
         audioPlayer?.stop()
     }
 
-    func cancel() {
+    public func cancel() {
         stopPlayback()
         cancelConversion()
         if isRecording {
@@ -86,7 +86,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
         seedWaveform()
     }
 
-    func goBack() {
+    public func goBack() {
         stopPlayback()
         lastRecordedURL = nil
         switch step {
@@ -416,7 +416,7 @@ final class VoiceTransformViewModel: NSObject, ObservableObject {
 }
 
 extension VoiceTransformViewModel: AVAudioPlayerDelegate {
-    nonisolated func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+    nonisolated public func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
         Task { @MainActor in
             playbackTimer?.invalidate()
             playbackTimer = nil
@@ -431,10 +431,14 @@ extension VoiceTransformViewModel: AVAudioPlayerDelegate {
     }
 }
 
-struct VoiceTransformView: View {
+public struct VoiceTransformView: View {
     @ObservedObject var model: VoiceTransformViewModel
 
-    var body: some View {
+    public init(model: VoiceTransformViewModel) {
+        self.model = model
+    }
+
+    public var body: some View {
         ZStack {
             LinearGradient(colors: [Color(hex: 0x161619), Color(hex: 0x0C0C0E)],
                            startPoint: .top,
@@ -558,52 +562,70 @@ struct VoiceTransformView: View {
             let cardWidth: CGFloat = 124
             let sidePadding = max(0, (geo.size.width - cardWidth) / 2)
             if #available(iOS 17.0, *) {
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 10) {
-                        ForEach(VoicePersona.all) { persona in
-                            personaButton(persona)
-                                .frame(width: cardWidth)
-                                .id(persona.id)
-                        }
-                    }
-                    .scrollTargetLayout()
-                    .padding(.horizontal, sidePadding)
-                    .padding(.vertical, 14)
-                }
-                .scrollContentBackground(.hidden)
-                .scrollTargetBehavior(.viewAligned)
-                .scrollPosition(id: Binding(
-                    get: { model.selectedPersona.id },
-                    set: { newID in
-                        if let newID, let persona = VoicePersona.all.first(where: { $0.id == newID }) {
-                            model.selectedPersona = persona
-                        }
-                    }
-                ))
+                snapCarousel(cardWidth: cardWidth, sidePadding: sidePadding)
             } else {
-                ScrollViewReader { proxy in
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 10) {
-                            ForEach(VoicePersona.all) { persona in
-                                personaButton(persona)
-                                    .frame(width: cardWidth)
-                                    .id(persona.id)
-                            }
-                        }
-                        .padding(.horizontal, sidePadding)
-                        .padding(.vertical, 14)
-                    }
-                    .scrollContentBackground(.hidden)
-                    .onAppear { proxy.scrollTo(model.selectedPersona.id, anchor: .center) }
-                    .onChange(of: model.selectedPersona) { _ in
-                        withAnimation(.easeOut(duration: 0.3)) {
-                            proxy.scrollTo(model.selectedPersona.id, anchor: .center)
-                        }
-                    }
-                }
+                legacyCarousel(cardWidth: cardWidth, sidePadding: sidePadding)
             }
         }
         .frame(height: 156)
+    }
+
+    @available(iOS 17.0, *)
+    private func snapCarousel(cardWidth: CGFloat, sidePadding: CGFloat) -> some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 10) {
+                ForEach(VoicePersona.all) { persona in
+                    personaButton(persona)
+                        .frame(width: cardWidth)
+                        .scrollTransition(.interactive, axis: .horizontal) { content, phase in
+                            let distance = min(abs(phase.value), 1)
+                            return content
+                                .scaleEffect(1 - distance * 0.2)
+                                .opacity(1 - distance * 0.5)
+                        }
+                        .id(persona.id)
+                }
+            }
+            .scrollTargetLayout()
+            .padding(.horizontal, sidePadding)
+            .padding(.vertical, 14)
+        }
+        .scrollContentBackground(.hidden)
+        .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
+        .scrollPosition(id: Binding(
+            get: { model.selectedPersona.id },
+            set: { newID in
+                if let newID, let persona = VoicePersona.all.first(where: { $0.id == newID }) {
+                    model.selectedPersona = persona
+                }
+            }
+        ))
+    }
+
+    private func legacyCarousel(cardWidth: CGFloat, sidePadding: CGFloat) -> some View {
+        ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 10) {
+                    ForEach(VoicePersona.all) { persona in
+                        personaButton(persona)
+                            .frame(width: cardWidth)
+                            .scaleEffect(model.selectedPersona == persona ? 1 : 0.8)
+                            .opacity(model.selectedPersona == persona ? 1 : 0.5)
+                            .animation(.easeOut(duration: 0.25), value: model.selectedPersona)
+                            .id(persona.id)
+                    }
+                }
+                .padding(.horizontal, sidePadding)
+                .padding(.vertical, 14)
+            }
+            .scrollContentBackground(.hidden)
+            .onAppear { proxy.scrollTo(model.selectedPersona.id, anchor: .center) }
+            .onChange(of: model.selectedPersona) { _ in
+                withAnimation(.easeOut(duration: 0.3)) {
+                    proxy.scrollTo(model.selectedPersona.id, anchor: .center)
+                }
+            }
+        }
     }
 
     private func personaButton(_ persona: VoicePersona) -> some View {
@@ -617,9 +639,6 @@ struct VoiceTransformView: View {
                     .font(.system(size: 15, weight: selected ? .bold : .medium))
                     .foregroundStyle(selected ? .white : .white.opacity(0.55))
             }
-            .scaleEffect(selected ? 1 : 0.8)
-            .opacity(selected ? 1 : 0.5)
-            .animation(.easeOut(duration: 0.25), value: selected)
         }
         .buttonStyle(.plain)
     }
@@ -911,4 +930,8 @@ struct NeonWaveformView: View {
         let hue = (140 + t * 280).truncatingRemainder(dividingBy: 360) / 360
         return Color(hue: hue, saturation: saturation, brightness: lightness, opacity: alpha)
     }
+}
+
+#Preview {
+    VoiceTransformView(model: VoiceTransformViewModel(service: MockConvertService()))
 }

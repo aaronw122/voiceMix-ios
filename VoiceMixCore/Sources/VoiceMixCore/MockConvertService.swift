@@ -5,8 +5,10 @@ import Foundation
 /// For the steel thread the mock echoes the user's *actual recording* back so
 /// playback feels real (untransformed) on-device. If the recording can't be
 /// found, it falls back to the bundled sample so the flow never breaks.
-struct MockConvertService: ConvertService {
-    func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
+public struct MockConvertService: ConvertService {
+    public init() {}
+
+    public func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
         #if DEBUG
         // Catch wrong live routing early: a green mock must not mask a
         // voiceId/engine mismatch that would 422 against the real backend.
@@ -23,7 +25,7 @@ struct MockConvertService: ConvertService {
         )
     }
 
-    func fetchAudio(_ audioUrl: URL) async throws -> URL {
+    public func fetchAudio(_ audioUrl: URL) async throws -> URL {
         let source = recordedFile(from: audioUrl) ?? bundledSample()
 
         guard let source else { throw ConvertServiceError.missingBundledSample }

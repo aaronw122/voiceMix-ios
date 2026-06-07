@@ -7,7 +7,7 @@ import os
 /// `POST /impersonate`. Both take a multipart body with a `voiceId` form field
 /// and an `audio` file part; for modal we send EXACTLY those two parts (no
 /// `text` part — the backend rejects sending both audio and text).
-struct LiveConvertService: ConvertService {
+public struct LiveConvertService: ConvertService {
     /// Mirror of the backend's 10MB upload limit. We fail fast with a typed
     /// error before buffering the file rather than uploading and eating a 413.
     static let maxUploadBytes = 10 * 1024 * 1024
@@ -17,12 +17,12 @@ struct LiveConvertService: ConvertService {
 
     private let log = Logger(subsystem: "com.aaron.voiceMixer", category: "network")
 
-    init(baseURL: URL = Config.baseURL, session: URLSession = .shared) {
+    public init(baseURL: URL = Config.baseURL, session: URLSession = .shared) {
         self.baseURL = baseURL
         self.session = session
     }
 
-    func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
+    public func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
         let path: String
         switch engine {
         case .elevenlabs: path = "convert"
@@ -70,7 +70,7 @@ struct LiveConvertService: ConvertService {
         return try JSONDecoder().decode(ConvertResponse.self, from: data)
     }
 
-    func fetchAudio(_ audioUrl: URL) async throws -> URL {
+    public func fetchAudio(_ audioUrl: URL) async throws -> URL {
         let data: Data
         let response: URLResponse
         do {

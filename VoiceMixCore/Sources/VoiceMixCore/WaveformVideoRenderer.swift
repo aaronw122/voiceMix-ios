@@ -29,24 +29,20 @@ struct WaveformVideoRenderer {
     /// Video output dimensions and timing. The frame is static, so a low fps
     /// keeps the video tiny.
     private enum VideoSpec {
-        static let frameSize = CGSize(width: 600, height: 600)
+        // Wide-and-short so Messages renders a slim, voice-message-style pill
+        // (the bubble takes the video's aspect ratio). Lower the height for a
+        // thinner pill; keep both dimensions even for H.264.
+        static let frameSize = CGSize(width: 600, height: 140)
         static let framesPerSecond: Int32 = 6
         static let minimumDurationSeconds = 0.1
     }
 
-    /// Layout ratios and metrics for the branded square cover.
+    /// Metrics for the slim waveform pill cover.
     private enum CoverLayout {
-        static let frameInset: CGFloat = 40
-        static let cornerRadius: CGFloat = 28
-        static let frameLineWidth: CGFloat = 3
-        static let centerInset: CGFloat = 34
-        static let centerBandYRatio: CGFloat = 0.29
-        static let centerBandHeightRatio: CGFloat = 0.34
-        static let wordmarkYRatio: CGFloat = 0.68
-        static let metaYRatio: CGFloat = 0.80
-        static let micPointSize: CGFloat = 200
-        static let wordmarkFontSize: CGFloat = 56
-        static let metaFontSize: CGFloat = 24
+        static let hInset: CGFloat = 36
+        static let vInset: CGFloat = 30
+        /// Fallback glyph size when no waveform can be sampled.
+        static let micPointSize: CGFloat = 56
     }
 
     /// Wrap `audioURL` in an `.mp4` with a static branded cover and return the
@@ -105,9 +101,10 @@ struct WaveformVideoRenderer {
 
     // MARK: - Cover image
 
-    /// Build a clean, branded square cover: dark background, centered mic glyph,
-    /// and the "voiceMix" wordmark. Subclasses of this concern (the waveform)
-    /// override the center by passing a custom drawing block.
+    /// Build a slim pill cover: dark background filling the frame with the
+    /// rainbow waveform spanning its width. Falls back to a small centered mic
+    /// glyph when no waveform can be sampled. `duration`/`personaName` are kept
+    /// for call-site compatibility but no longer drawn in the slim layout.
     func makeCoverImage(duration: CMTime = .zero,
                         personaName: String? = nil,
                         centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
@@ -115,13 +112,14 @@ struct WaveformVideoRenderer {
         return renderer.image { ctx in
             let cg = ctx.cgContext
             let bounds = CGRect(origin: .zero, size: VideoSpec.frameSize)
-            let inset = bounds.insetBy(dx: CoverLayout.frameInset, dy: CoverLayout.frameInset)
+            let inset = bounds.insetBy(dx: CoverLayout.hInset, dy: CoverLayout.vInset)
 
             drawCoverBackground(in: bounds, context: cg)
-            drawInnerFrame(in: inset)
-            drawCenterArtwork(in: inset, centerDraw: centerDraw, context: cg)
-            drawWordmark()
-            drawMeta(duration: duration, personaName: personaName)
+            if let centerDraw {
+                centerDraw(cg, inset)
+            } else {
+                drawFallbackMic(in: inset, context: cg)
+            }
         }
     }
 
@@ -145,80 +143,14 @@ struct WaveformVideoRenderer {
                               options: [])
     }
 
-    /// Subtle rounded inner frame.
-    private func drawInnerFrame(in inset: CGRect) {
-        let framePath = UIBezierPath(roundedRect: inset, cornerRadius: CoverLayout.cornerRadius)
-        UIColor.white.withAlphaComponent(0.10).setStroke()
-        framePath.lineWidth = CoverLayout.frameLineWidth
-        framePath.stroke()
-    }
-
-    /// Custom center art (e.g. waveform) in the reserved middle band, or the
-    /// default centered mic glyph.
-    private func drawCenterArtwork(in inset: CGRect,
-                                   centerDraw: ((CGContext, CGRect) -> Void)?,
-                                   context cg: CGContext) {
-        let frameSize = VideoSpec.frameSize
-        if let centerDraw {
-            let centerRect = CGRect(x: inset.minX + CoverLayout.centerInset,
-                                    y: frameSize.height * CoverLayout.centerBandYRatio,
-                                    width: inset.width - CoverLayout.centerInset * 2,
-                                    height: frameSize.height * CoverLayout.centerBandHeightRatio)
-            centerDraw(cg, centerRect)
-        } else {
-            let config = UIImage.SymbolConfiguration(pointSize: CoverLayout.micPointSize, weight: .semibold)
-            if let mic = UIImage(systemName: "mic.fill", withConfiguration: config) {
-                let tinted = mic.withTintColor(coverAccentColor, renderingMode: .alwaysOriginal)
-                let micSize = tinted.size
-                let micOrigin = CGPoint(x: (frameSize.width - micSize.width) / 2,
-                                        y: frameSize.height * CoverLayout.centerBandYRatio)
-                tinted.draw(at: micOrigin)
-            }
-        }
-    }
-
-    /// The "voiceMix" wordmark.
-    private func drawWordmark() {
-        let frameSize = VideoSpec.frameSize
-        let text = "voiceMix"
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: CoverLayout.wordmarkFontSize, weight: .bold),
-            .foregroundColor: UIColor.white,
-            .paragraphStyle: paragraph,
-        ]
-        let textSize = (text as NSString).size(withAttributes: attrs)
-        let textRect = CGRect(x: 0,
-                              y: frameSize.height * CoverLayout.wordmarkYRatio,
-                              width: frameSize.width,
-                              height: textSize.height)
-        (text as NSString).draw(in: textRect, withAttributes: attrs)
-    }
-
-    private func drawMeta(duration: CMTime, personaName: String?) {
-        let frameSize = VideoSpec.frameSize
-        let durationText = formattedDuration(duration)
-        let detail = [personaName, durationText].compactMap { value -> String? in
-            guard let value, !value.isEmpty else { return nil }
-            return value
-        }.joined(separator: " · ")
-
-        guard !detail.isEmpty else { return }
-
-        let paragraph = NSMutableParagraphStyle()
-        paragraph.alignment = .center
-        let attrs: [NSAttributedString.Key: Any] = [
-            .font: UIFont.systemFont(ofSize: CoverLayout.metaFontSize, weight: .medium),
-            .foregroundColor: UIColor.white.withAlphaComponent(0.55),
-            .paragraphStyle: paragraph,
-        ]
-        let textSize = (detail as NSString).size(withAttributes: attrs)
-        let textRect = CGRect(x: 0,
-                              y: frameSize.height * CoverLayout.metaYRatio,
-                              width: frameSize.width,
-                              height: textSize.height)
-        (detail as NSString).draw(in: textRect, withAttributes: attrs)
+    /// Centered mic glyph used only when no waveform can be sampled.
+    private func drawFallbackMic(in rect: CGRect, context cg: CGContext) {
+        let config = UIImage.SymbolConfiguration(pointSize: CoverLayout.micPointSize, weight: .semibold)
+        guard let mic = UIImage(systemName: "mic.fill", withConfiguration: config) else { return }
+        let tinted = mic.withTintColor(coverAccentColor, renderingMode: .alwaysOriginal)
+        let origin = CGPoint(x: rect.midX - tinted.size.width / 2,
+                             y: rect.midY - tinted.size.height / 2)
+        tinted.draw(at: origin)
     }
 
     // MARK: - Waveform sampling
@@ -599,13 +531,6 @@ struct WaveformVideoRenderer {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return dir.appendingPathComponent("\(suffix)-\(UUID().uuidString).\(ext)")
-    }
-
-    private func formattedDuration(_ duration: CMTime) -> String? {
-        let seconds = CMTimeGetSeconds(duration)
-        guard seconds.isFinite, seconds > 0 else { return nil }
-        let total = max(1, Int(seconds.rounded()))
-        return "\(total / 60):\(String(format: "%02d", total % 60))"
     }
 
     private static func rainbowColor(t: CGFloat,

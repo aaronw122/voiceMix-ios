@@ -3,7 +3,7 @@ import Foundation
 /// Response shape returned by the convert backend. Both `/convert` and
 /// `/impersonate` return this identical shape, so everything downstream is
 /// engine-agnostic.
-struct ConvertResponse: Decodable {
+public struct ConvertResponse: Decodable {
     let url: String
     let title: String
     let audioUrl: String
@@ -11,7 +11,7 @@ struct ConvertResponse: Decodable {
 
 /// The single seam isolating real vs. mock networking. Nothing downstream
 /// knows whether the bytes came from the backend or a bundled sample.
-protocol ConvertService {
+public protocol ConvertService {
     /// Upload the recorded audio and receive a `{url, title, audioUrl}` payload.
     /// `engine` selects the backend endpoint (`.elevenlabs` → `/convert`,
     /// `.modal` → `/impersonate`); the backend 422s on a wrong pairing.

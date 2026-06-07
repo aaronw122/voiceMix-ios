@@ -1,6 +1,6 @@
 import Foundation
 
-enum Config {
+public enum Config {
     /// Base URL for the convert backend.
     ///
     /// Per steel.md the preferred long-term approach is to drive this from an
@@ -8,7 +8,7 @@ enum Config {
     /// thread we keep a simple `#if DEBUG` fallback constant so the swap to
     /// german's real endpoint is a one-line change and we don't fight xcconfig
     /// under time pressure.
-    static let baseURL: URL = {
+    public static let baseURL: URL = {
         if let host = Bundle.main.object(forInfoDictionaryKey: "API_BASE_URL") as? String,
            !host.isEmpty,
            let url = URL(string: host) {
@@ -28,5 +28,5 @@ enum Config {
 
     /// Orthogonal to environment. `false` = real backend; flip to `true` for
     /// offline development against the bundled sample.
-    static let useMock = false
+    public static let useMock = false
 }

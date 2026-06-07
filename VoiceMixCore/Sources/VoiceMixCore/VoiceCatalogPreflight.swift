@@ -10,7 +10,7 @@ import os
 /// Non-blocking and short-timeout by design — this never gates the UI. It is
 /// invoked from `MessagesViewController.viewDidLoad`. Networking deliberately
 /// lives here, NOT in static catalog init or `Config`.
-enum VoiceCatalogPreflight {
+public enum VoiceCatalogPreflight {
     /// One `/voices` entry as returned by the backend.
     private struct ServerVoice: Decodable {
         let id: String
@@ -22,7 +22,7 @@ enum VoiceCatalogPreflight {
     private static let log = Logger(subsystem: "com.aaron.voiceMixer", category: "preflight")
 
     /// Fire-and-forget. Logs/asserts mismatches; swallows transport failures.
-    static func run(baseURL: URL = Config.baseURL) {
+    public static func run(baseURL: URL = Config.baseURL) {
         Task.detached(priority: .utility) {
             let endpoint = baseURL.appendingPathComponent("voices")
             var request = URLRequest(url: endpoint)
