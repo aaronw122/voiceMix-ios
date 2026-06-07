@@ -93,21 +93,28 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         case .persona:
             cancel()
         case .record:
-            if isRecording {
-                _ = recorder.stopRecording()
-                stopRecordingTimers()
-                isRecording = false
-            }
+            leaveRecordStep()
             step = .persona
         case .transforming:
             cancelConversion()
-            step = .record
-            statusLine = "Tap to record"
+            returnToRecordStep()
         case .review:
             preparedClip = nil
-            step = .record
-            statusLine = "Tap to record"
+            returnToRecordStep()
         }
+    }
+
+    private func leaveRecordStep() {
+        if isRecording {
+            _ = recorder.stopRecording()
+            stopRecordingTimers()
+            isRecording = false
+        }
+    }
+
+    private func returnToRecordStep() {
+        step = .record
+        statusLine = "Tap to record"
     }
 
     func recordButtonTapped() {
@@ -166,21 +173,32 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         statusLine = "Inserting…"
         onInsert(videoURL) { [weak self] error in
             Task { @MainActor in
-                guard let self else { return }
-                self.isSending = false
-                if let error {
-                    self.log.error("SEND: insertAttachment error \(error.localizedDescription)")
-                    self.statusLine = "Insert failed: \(error.localizedDescription)"
-                } else {
-                    self.log.info("SEND: insertAttachment completed")
-                    self.statusLine = "Added to message — tap Send in Messages"
-                    self.preparedClip = nil
-                    self.step = .persona
-                    self.seedWaveform()
-                    self.onDismiss?()
-                }
+                self?.handleInsertCompletion(error)
             }
         }
+    }
+
+    private func handleInsertCompletion(_ error: Error?) {
+        isSending = false
+        if let error {
+            handleInsertFailure(error)
+        } else {
+            handleInsertSuccess()
+        }
+    }
+
+    private func handleInsertFailure(_ error: Error) {
+        log.error("SEND: insertAttachment error \(error.localizedDescription)")
+        statusLine = "Insert failed: \(error.localizedDescription)"
+    }
+
+    private func handleInsertSuccess() {
+        log.info("SEND: insertAttachment completed")
+        statusLine = "Added to message — tap Send in Messages"
+        preparedClip = nil
+        step = .persona
+        seedWaveform()
+        onDismiss?()
     }
 
     private func beginRecording() {
@@ -244,15 +262,9 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
             do {
                 let clip = try await self.prepareClip(from: recordedURL)
                 try Task.checkCancellation()
-                self.preparedClip = clip
-                self.stopStatusTimer()
-                self.step = .review
-                self.statusLine = "Transformed · \(self.formattedDuration)"
-                self.conversionTask = nil
+                self.finishConversion(with: clip)
             } catch is CancellationError {
-                self.stopStatusTimer()
-                self.statusLine = "Tap to record"
-                self.conversionTask = nil
+                self.handleConversionCancellation()
             } catch {
                 self.log.error("CONVERT: failed \(String(describing: error))")
                 self.stopStatusTimer()
@@ -260,6 +272,20 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.conversionTask = nil
             }
         }
+    }
+
+    private func finishConversion(with clip: PreparedClip) {
+        preparedClip = clip
+        stopStatusTimer()
+        step = .review
+        statusLine = "Transformed · \(formattedDuration)"
+        conversionTask = nil
+    }
+
+    private func handleConversionCancellation() {
+        stopStatusTimer()
+        statusLine = "Tap to record"
+        conversionTask = nil
     }
 
     /// Maps a `ConvertServiceError` to distinct user-visible copy. On transient
@@ -310,13 +336,17 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         let convertedAudioURL = try await service.fetchAudio(audioUrl)
         try Task.checkCancellation()
         let renderer = WaveformVideoRenderer()
-        let sentAudioBars = await renderer.displayBars(fromAudio: convertedAudioURL)
-        if !sentAudioBars.isEmpty {
-            waveformBars = sentAudioBars
-        }
+        await updatePreviewWaveform(using: renderer, audioURL: convertedAudioURL)
         let videoURL = try await renderer.makeVideo(fromAudio: convertedAudioURL,
                                                     personaName: selectedPersona.name)
         return PreparedClip(audioURL: convertedAudioURL, videoURL: videoURL)
+    }
+
+    private func updatePreviewWaveform(using renderer: WaveformVideoRenderer, audioURL: URL) async {
+        let sentAudioBars = await renderer.displayBars(fromAudio: audioURL)
+        if !sentAudioBars.isEmpty {
+            waveformBars = sentAudioBars
+        }
     }
 
     private func cancelConversion() {
@@ -325,22 +355,28 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         stopStatusTimer()
     }
 
+    private func scheduledMainActorTimer(interval: TimeInterval,
+                                         tick: @escaping @MainActor (VoiceTransformViewModel) -> Void) -> Timer {
+        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                tick(self)
+            }
+        }
+    }
+
     private func startRecordingTimers() {
         recordTimer?.invalidate()
         levelTimer?.invalidate()
 
-        recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isRecording else { return }
-                self.seconds += 0.1
-            }
+        recordTimer = scheduledMainActorTimer(interval: 0.1) { model in
+            guard model.isRecording else { return }
+            model.seconds += 0.1
         }
 
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isRecording else { return }
-                self.pushLiveLevel(self.recorder.normalizedLevel())
-            }
+        levelTimer = scheduledMainActorTimer(interval: 0.1) { model in
+            guard model.isRecording else { return }
+            model.pushLiveLevel(model.recorder.normalizedLevel())
         }
     }
 
@@ -353,12 +389,9 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private func startStatusTimer() {
         statusTimer?.invalidate()
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 0.85, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.statusIndex = min(self.statusIndex + 1, self.transformStatuses.count - 1)
-                self.statusLine = self.transformStatuses[self.statusIndex]
-            }
+        statusTimer = scheduledMainActorTimer(interval: 0.85) { model in
+            model.statusIndex = min(model.statusIndex + 1, model.transformStatuses.count - 1)
+            model.statusLine = model.transformStatuses[model.statusIndex]
         }
     }
 
@@ -369,15 +402,13 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private func startPlaybackTimer() {
         playbackTimer?.invalidate()
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let player = self.audioPlayer else { return }
-                if player.duration > 0 {
-                    self.playProgress = min(1, player.currentTime / player.duration)
-                }
-                if !player.isPlaying {
-                    self.audioPlayerDidFinishPlaying(player, successfully: true)
-                }
+        playbackTimer = scheduledMainActorTimer(interval: 1.0 / 20.0) { model in
+            guard let player = model.audioPlayer else { return }
+            if player.duration > 0 {
+                model.playProgress = min(1, player.currentTime / player.duration)
+            }
+            if !player.isPlaying {
+                model.audioPlayerDidFinishPlaying(player, successfully: true)
             }
         }
     }
@@ -706,36 +737,48 @@ public struct VoiceTransformView: View {
     @ViewBuilder
     private var recordControl: some View {
         if model.step == .transforming {
-            ProgressView()
-                .tint(model.selectedPersona.color2)
-                .scaleEffect(1.45)
+            transformingControl
         } else if model.isRecording {
-            Button { model.recordButtonTapped() } label: {
-                ZStack {
-                    Circle()
-                        .stroke(.white.opacity(0.50), lineWidth: 4)
-                        .frame(width: 76, height: 76)
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(Color(hex: 0xFF9500))
-                        .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 18)
-                        .frame(width: 28, height: 28)
-                }
-            }
-            .buttonStyle(.plain)
+            stopRecordingButton
         } else {
-            Button { model.recordButtonTapped() } label: {
-                ZStack {
-                    Circle()
-                        .stroke(.white.opacity(0.70), lineWidth: 3)
-                        .frame(width: 80, height: 80)
-                    Circle()
-                        .fill(Color(hex: 0xFF9500))
-                        .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 24)
-                        .frame(width: 60, height: 60)
-                }
-            }
-            .buttonStyle(.plain)
+            startRecordingButton
         }
+    }
+
+    private var transformingControl: some View {
+        ProgressView()
+            .tint(model.selectedPersona.color2)
+            .scaleEffect(1.45)
+    }
+
+    private var stopRecordingButton: some View {
+        Button { model.recordButtonTapped() } label: {
+            ZStack {
+                Circle()
+                    .stroke(.white.opacity(0.50), lineWidth: 4)
+                    .frame(width: 76, height: 76)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color(hex: 0xFF9500))
+                    .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 18)
+                    .frame(width: 28, height: 28)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var startRecordingButton: some View {
+        Button { model.recordButtonTapped() } label: {
+            ZStack {
+                Circle()
+                    .stroke(.white.opacity(0.70), lineWidth: 3)
+                    .frame(width: 80, height: 80)
+                Circle()
+                    .fill(Color(hex: 0xFF9500))
+                    .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 24)
+                    .frame(width: 60, height: 60)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var reviewPage: some View {
@@ -759,51 +802,55 @@ public struct VoiceTransformView: View {
                 .padding(.bottom, 14)
 
             HStack(spacing: 28) {
-                VStack(spacing: 10) {
-                    Button { model.redo() } label: {
-                        Circle()
-                            .fill(.white.opacity(0.10))
-                            .frame(width: 54, height: 54)
-                            .overlay {
-                                Image(systemName: "arrow.counterclockwise")
-                                    .font(.system(size: 22, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.70))
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    Text("Redo")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.40))
+                reviewAction(label: "Redo", size: 54, action: { model.redo() }) {
+                    Circle()
+                        .fill(.white.opacity(0.10))
+                        .frame(width: 54, height: 54)
+                        .overlay {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.70))
+                        }
                 }
-                .frame(width: 54)
 
-                VStack(spacing: 10) {
-                    Button { model.togglePlayback() } label: {
-                        Circle()
-                            .fill(LinearGradient(colors: [model.selectedPersona.color1, model.selectedPersona.color2],
-                                                 startPoint: .topLeading,
-                                                 endPoint: .bottomTrailing))
-                            .shadow(color: model.selectedPersona.color2.opacity(0.55), radius: 28)
-                            .frame(width: 80, height: 80)
-                            .overlay {
-                                Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 28, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .offset(x: model.isPlaying ? 0 : 2)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    Text(model.isPlaying ? "Playing" : "Preview")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.40))
+                reviewAction(label: model.isPlaying ? "Playing" : "Preview",
+                             size: 80,
+                             action: { model.togglePlayback() }) {
+                    Circle()
+                        .fill(LinearGradient(colors: [model.selectedPersona.color1, model.selectedPersona.color2],
+                                             startPoint: .topLeading,
+                                             endPoint: .bottomTrailing))
+                        .shadow(color: model.selectedPersona.color2.opacity(0.55), radius: 28)
+                        .frame(width: 80, height: 80)
+                        .overlay {
+                            Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundStyle(.white)
+                                .offset(x: model.isPlaying ? 0 : 2)
+                        }
                 }
-                .frame(width: 80)
 
                 Color.clear.frame(width: 54)
             }
             .frame(height: 108)
             .padding(.bottom, 16)
         }
+    }
+
+    private func reviewAction<Icon: View>(label: String,
+                                          size: CGFloat,
+                                          action: @escaping () -> Void,
+                                          @ViewBuilder icon: () -> Icon) -> some View {
+        VStack(spacing: 10) {
+            Button(action: action) {
+                icon()
+            }
+            .buttonStyle(.plain)
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.white.opacity(0.40))
+        }
+        .frame(width: size)
     }
 
     private func personaChip(showLiveBadge: Bool) -> some View {
@@ -878,6 +925,11 @@ struct NeonWaveformView: View {
         }
     }
 
+    private struct BarStyle {
+        let amplitude: Double
+        let color: Color
+    }
+
     private func draw(in context: inout GraphicsContext, size: CGSize, time: TimeInterval) {
         let count = 54
         let gap = size.width / CGFloat(count)
@@ -887,39 +939,52 @@ struct NeonWaveformView: View {
 
         for index in 0..<count {
             let source = index < bars.count ? bars[index] : fallbackBar(index)
-            let t = Double(index) / Double(count)
-            let shimmer = (sin(Double(index) * 0.5 - time * 6) * 0.5) + 0.5
-            let amplitude: Double
-            let color: Color
-
-            switch mode {
-            case .recording:
-                amplitude = source
-                color = Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
-            case .transforming:
-                amplitude = source * (0.35 + 0.65 * shimmer)
-                let drift = (t + time * 0.15).truncatingRemainder(dividingBy: 1)
-                color = Self.rainbowColor(drift, lightness: 0.60 + shimmer * 0.08, saturation: 1, alpha: 1)
-            case .ready:
-                amplitude = source
-                color = Self.rainbowColor(t, lightness: 0.52, saturation: 0.70, alpha: 0.50)
-            case .playing:
-                amplitude = source
-                if t <= progress {
-                    color = Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
-                } else {
-                    color = .white.opacity(0.16)
-                }
-            }
-
-            let height = max(3, CGFloat(amplitude) * maxHalfHeight)
-            let rect = CGRect(x: CGFloat(index) * gap + (gap - barWidth) / 2,
-                              y: midY - height,
-                              width: barWidth,
-                              height: height * 2)
-            let path = Path(roundedRect: rect, cornerRadius: min(barWidth / 2, 6))
-            context.fill(path, with: .color(color))
+            let style = barStyle(index: index, source: source, time: time)
+            let path = barPath(index: index,
+                               amplitude: style.amplitude,
+                               gap: gap,
+                               barWidth: barWidth,
+                               midY: midY,
+                               maxHalfHeight: maxHalfHeight)
+            context.fill(path, with: .color(style.color))
         }
+    }
+
+    private func barStyle(index: Int, source: Double, time: TimeInterval) -> BarStyle {
+        let t = Double(index) / Double(54)
+        let shimmer = (sin(Double(index) * 0.5 - time * 6) * 0.5) + 0.5
+
+        switch mode {
+        case .recording:
+            return BarStyle(amplitude: source,
+                            color: Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1))
+        case .transforming:
+            let drift = (t + time * 0.15).truncatingRemainder(dividingBy: 1)
+            return BarStyle(amplitude: source * (0.35 + 0.65 * shimmer),
+                            color: Self.rainbowColor(drift, lightness: 0.60 + shimmer * 0.08, saturation: 1, alpha: 1))
+        case .ready:
+            return BarStyle(amplitude: source,
+                            color: Self.rainbowColor(t, lightness: 0.52, saturation: 0.70, alpha: 0.50))
+        case .playing:
+            let color = t <= progress
+                ? Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
+                : .white.opacity(0.16)
+            return BarStyle(amplitude: source, color: color)
+        }
+    }
+
+    private func barPath(index: Int,
+                         amplitude: Double,
+                         gap: CGFloat,
+                         barWidth: CGFloat,
+                         midY: CGFloat,
+                         maxHalfHeight: CGFloat) -> Path {
+        let height = max(3, CGFloat(amplitude) * maxHalfHeight)
+        let rect = CGRect(x: CGFloat(index) * gap + (gap - barWidth) / 2,
+                          y: midY - height,
+                          width: barWidth,
+                          height: height * 2)
+        return Path(roundedRect: rect, cornerRadius: min(barWidth / 2, 6))
     }
 
     private func fallbackBar(_ index: Int) -> Double {
