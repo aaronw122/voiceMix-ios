@@ -74,11 +74,11 @@
    <ArchiveAction
       buildConfiguration = "Release"
       revealArchiveInOrganizer = "YES">
-      <PostActions>
+      <PreActions>
          <ExecutionAction
             ActionType = "Xcode.IDEStandardExecutionActionsCore.ExecutionActionType.ShellScriptAction">
             <ActionContent
-               title = "Bump build number (optional)"
+               title = "Bump version (optional)"
                scriptText = "&quot;${PROJECT_DIR}/scripts/bump-build-number.sh&quot;&#10;">
                <EnvironmentBuildable>
                   <BuildableReference
@@ -91,6 +91,6 @@
                </EnvironmentBuildable>
             </ActionContent>
          </ExecutionAction>
-      </PostActions>
+      </PreActions>
    </ArchiveAction>
 </Scheme>

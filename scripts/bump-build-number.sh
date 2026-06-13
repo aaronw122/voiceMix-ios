@@ -1,9 +1,11 @@
 #!/bin/bash
 #
-# Archive POST-action: optionally bump the build number and/or marketing version.
+# Archive PRE-action: optionally bump the build number and/or marketing version.
 #
-# Wired into the voiceMixer scheme under Archive > Post-actions. On each archive
-# it asks TWO independent questions, each of which can be answered "leave it":
+# Wired into the voiceMixer scheme under Archive > Pre-actions. It runs BEFORE
+# the build, so the archive you're about to create carries the numbers you pick
+# here. On each archive it asks TWO independent questions, each answerable
+# "leave it":
 #
 #   1. Build number  (CFBundleVersion / CURRENT_PROJECT_VERSION) — an integer
 #      counter. Enter how much to add (0 = no change).
@@ -18,9 +20,9 @@
 # $(MARKETING_VERSION) substitution), so we edit MARKETING_VERSION directly in
 # project.pbxproj — a global replace covers every target/config at once.
 #
-# This is a POST-action: the archive you just built keeps its current numbers;
-# changes prepare the NEXT archive. Each change leaves a diff in
-# project.pbxproj to commit. With no GUI (CI) both prompts default to "leave it".
+# Pre-action tradeoff: the bump happens before the build, so it applies even if
+# the build later fails. Each change leaves a diff in project.pbxproj to commit.
+# With no GUI (CI) both prompts default to "leave it".
 
 set -euo pipefail
 
