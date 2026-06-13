@@ -17,7 +17,17 @@ public struct LiveConvertService: ConvertService {
 
     private let log = Logger(subsystem: "com.aaron.voiceMixer", category: "network")
 
-    public init(baseURL: URL = Config.baseURL, session: URLSession = .shared) {
+    /// A backend convert can take ~70s, which blows past `URLSession.shared`'s
+    /// 60s default request timeout (it throws `NSURLErrorTimedOut`, surfaced as
+    /// `ConvertServiceError.network`). Use a dedicated session with a 120s
+    /// request timeout to leave headroom.
+    public static let convertSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        return URLSession(configuration: config)
+    }()
+
+    public init(baseURL: URL = Config.baseURL, session: URLSession = LiveConvertService.convertSession) {
         self.baseURL = baseURL
         self.session = session
     }
