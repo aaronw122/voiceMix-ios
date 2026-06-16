@@ -937,14 +937,36 @@ struct PersonaAvatarView: View {
                                  startPoint: .topLeading,
                                  endPoint: .bottomTrailing))
             .frame(width: size, height: size)
-            .overlay {
-                Text(persona.monogram)
-                    .font(.system(size: size * 0.42, weight: .bold))
-                    .foregroundStyle(.white)
-            }
+            .overlay { content }
             .shadow(color: selected ? persona.color2.opacity(0.65) : .black.opacity(0.40),
                     radius: selected ? 20 : 8,
                     y: selected ? 0 : 4)
+    }
+
+    /// Prefers the persona's cartoon art; falls back to the SF Symbol placeholder when the
+    /// artwork hasn't shipped yet — so every slot renders sensibly either way.
+    @ViewBuilder
+    private var content: some View {
+        if let image = personaImage {
+            // Real cartoon: inset inside the gradient so the colored ring stays visible.
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size * 0.82, height: size * 0.82)
+                .clipShape(Circle())
+                .accessibilityLabel(persona.name)
+        } else {
+            Image(systemName: persona.symbol)
+                .font(.system(size: size * 0.40, weight: .semibold))
+                .foregroundStyle(.white)
+                .accessibilityLabel(persona.name)
+        }
+    }
+
+    /// The persona's cartoon from the (extension) app bundle, or nil when no asset is present.
+    private var personaImage: UIImage? {
+        guard let imageName = persona.imageName else { return nil }
+        return UIImage(named: imageName)
     }
 }
 
