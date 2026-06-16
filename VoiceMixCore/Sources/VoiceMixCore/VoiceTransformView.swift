@@ -937,7 +937,7 @@ struct PersonaAvatarView: View {
                                  startPoint: .topLeading,
                                  endPoint: .bottomTrailing))
             .frame(width: size, height: size)
-            .overlay { content }
+            .overlay { avatarContent }
             .shadow(color: selected ? persona.color2.opacity(0.65) : .black.opacity(0.40),
                     radius: selected ? 20 : 8,
                     y: selected ? 0 : 4)
@@ -946,9 +946,9 @@ struct PersonaAvatarView: View {
     /// Prefers the persona's cartoon art; falls back to the SF Symbol placeholder when the
     /// artwork hasn't shipped yet — so every slot renders sensibly either way.
     @ViewBuilder
-    private var content: some View {
+    private var avatarContent: some View {
         if let image = personaImage {
-            // Real cartoon: inset inside the gradient so the colored ring stays visible.
+            // Inset inside the gradient so the colored ring stays visible around the art.
             Image(uiImage: image)
                 .resizable()
                 .scaledToFill()
@@ -956,7 +956,7 @@ struct PersonaAvatarView: View {
                 .clipShape(Circle())
                 .accessibilityLabel(persona.name)
         } else {
-            Image(systemName: persona.symbol)
+            Image(systemName: persona.placeholderSymbol)
                 .font(.system(size: size * 0.40, weight: .semibold))
                 .foregroundStyle(.white)
                 .accessibilityLabel(persona.name)

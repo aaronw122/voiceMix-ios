@@ -28,11 +28,11 @@ struct VoicePersona: Identifiable, Equatable {
     let monogram: String
     /// Asset-catalog name for the persona's cartoon art, resolved from the extension
     /// bundle at runtime (same place `sample.mp3` lives). When the named asset is absent,
-    /// `PersonaAvatarView` falls back to `symbol`, then to `monogram` — so a slot can ship
-    /// before its art does, and real art drops in later with no code change.
+    /// `PersonaAvatarView` falls back to `placeholderSymbol` — so a slot can ship before
+    /// its art does, and real art drops in later with no code change.
     let imageName: String?
-    /// SF Symbol shown inside the gradient ring as a placeholder until real cartoon art lands.
-    let symbol: String
+    /// SF Symbol shown inside the gradient ring until real cartoon art lands.
+    let placeholderSymbol: String
     let color1: Color
     let color2: Color
     let uiColor1: UIColor
@@ -45,7 +45,7 @@ struct VoicePersona: Identifiable, Equatable {
                  tag: String,
                  monogram: String,
                  imageName: String?,
-                 symbol: String,
+                 placeholderSymbol: String,
                  hex1: UInt32,
                  hex2: UInt32) {
         self.id = id
@@ -55,7 +55,7 @@ struct VoicePersona: Identifiable, Equatable {
         self.tag = tag
         self.monogram = monogram
         self.imageName = imageName
-        self.symbol = symbol
+        self.placeholderSymbol = placeholderSymbol
         self.color1 = Color(hex: hex1)
         self.color2 = Color(hex: hex2)
         self.uiColor1 = UIColor(hex: hex1)
@@ -63,9 +63,10 @@ struct VoicePersona: Identifiable, Equatable {
     }
 
     // Display is a reskin only: `voiceId` + `engine` are frozen to the values the backend
-    // already accepts, so the wire contract is unchanged. The four newly-named slots
-    // (Yoda, Batman, Dwarkesh, Elon) reuse the old slots' `voiceId`s and therefore still
-    // produce the *old* voice on the wire until the backend ships those voices.
+    // already accepts, so the wire contract is unchanged. Until backend voices ship, the
+    // newly-named slots map to existing voices —
+    //   Yoda -> obama, Batman -> queen_elizabeth, Dwarkesh -> young-woman, Elon -> old-man
+    // — i.e. they still produce the *old* voice on the wire until those voices land.
     static let all: [VoicePersona] = [
         VoicePersona(id: "femme-fatale",
                      voiceId: "femme-fatale",
@@ -74,7 +75,7 @@ struct VoicePersona: Identifiable, Equatable {
                      tag: "Sultry · smoky · poised",
                      monogram: "F",
                      imageName: "persona-femme-fatale",
-                     symbol: "sparkles",
+                     placeholderSymbol: "sparkles",
                      hex1: 0xB24592,
                      hex2: 0x4A1942),
         VoicePersona(id: "trump",
@@ -84,7 +85,7 @@ struct VoicePersona: Identifiable, Equatable {
                      tag: "Brash · bold · unmistakable",
                      monogram: "T",
                      imageName: "persona-trump",
-                     symbol: "megaphone.fill",
+                     placeholderSymbol: "megaphone.fill",
                      hex1: 0xE63946,
                      hex2: 0xF6A21D),
         VoicePersona(id: "yoda",
@@ -94,7 +95,7 @@ struct VoicePersona: Identifiable, Equatable {
                      tag: "Wise · ancient · cryptic",
                      monogram: "Y",
                      imageName: "persona-yoda",
-                     symbol: "wand.and.stars",
+                     placeholderSymbol: "wand.and.stars",
                      hex1: 0x56AB2F,
                      hex2: 0x1B4332),
         VoicePersona(id: "batman",
@@ -104,7 +105,7 @@ struct VoicePersona: Identifiable, Equatable {
                      tag: "Gritty · brooding · low",
                      monogram: "B",
                      imageName: "persona-batman",
-                     symbol: "moon.stars.fill",
+                     placeholderSymbol: "moon.stars.fill",
                      hex1: 0x141E30,
                      hex2: 0x243B55),
         VoicePersona(id: "dwarkesh",
@@ -114,7 +115,7 @@ struct VoicePersona: Identifiable, Equatable {
                      tag: "Curious · rapid · incisive",
                      monogram: "D",
                      imageName: "persona-dwarkesh",
-                     symbol: "mic.fill",
+                     placeholderSymbol: "mic.fill",
                      hex1: 0x2193B0,
                      hex2: 0x6DD5ED),
         VoicePersona(id: "elon",
@@ -124,7 +125,7 @@ struct VoicePersona: Identifiable, Equatable {
                      tag: "Dry · halting · visionary",
                      monogram: "E",
                      imageName: "persona-elon",
-                     symbol: "bolt.fill",
+                     placeholderSymbol: "bolt.fill",
                      hex1: 0x4776E6,
                      hex2: 0x8E54E9),
     ]
