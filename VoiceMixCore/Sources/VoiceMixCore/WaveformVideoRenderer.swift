@@ -82,11 +82,11 @@ struct WaveformVideoRenderer {
                                         duration: CMTime,
                                         personaName: String?) async -> UIImage {
         if let bars = try? await waveformBars(from: asset), !bars.isEmpty {
-            return makeCoverImage(duration: duration, personaName: personaName, centerDraw: { ctx, rect in
+            return makeCoverImage(centerDraw: { ctx, rect in
                 drawWaveform(bars: bars, in: rect, context: ctx)
             })
         }
-        return makeCoverImage(duration: duration, personaName: personaName)
+        return makeCoverImage()
     }
 
     // MARK: - Duration
@@ -103,11 +103,8 @@ struct WaveformVideoRenderer {
 
     /// Build a slim pill cover: dark background filling the frame with the
     /// rainbow waveform spanning its width. Falls back to a small centered mic
-    /// glyph when no waveform can be sampled. `duration`/`personaName` are kept
-    /// for call-site compatibility but no longer drawn in the slim layout.
-    func makeCoverImage(duration: CMTime = .zero,
-                        personaName: String? = nil,
-                        centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
+    /// glyph when no waveform can be sampled.
+    func makeCoverImage(centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: VideoSpec.frameSize)
         return renderer.image { ctx in
             let cg = ctx.cgContext
@@ -194,18 +191,35 @@ struct WaveformVideoRenderer {
     private func readPCMAmplitudes(from asset: AVURLAsset,
                                    track: AVAssetTrack,
                                    estimatedTotalSamples: Int) throws -> [CGFloat] {
-        let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: linearPCMReaderSettings)
-        output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { return [] }
-        reader.add(output)
-        guard reader.startReading() else { return [] }
+        guard let (reader, output) = try makePCMReader(for: asset, track: track) else { return [] }
 
         var sums = Array(repeating: CGFloat.zero, count: barCount)
         var counts = Array(repeating: 0, count: barCount)
-        var sampleIndex = 0
-        let estimatedTotalSamples = max(estimatedTotalSamples, barCount)
+        accumulateBuckets(from: output,
+                          estimatedTotalSamples: max(estimatedTotalSamples, barCount),
+                          sums: &sums,
+                          counts: &counts)
 
+        guard reader.status == .completed || reader.status == .reading else { return [] }
+        return normalizeBars(averageBuckets(sums: sums, counts: counts))
+    }
+
+    private func makePCMReader(for asset: AVURLAsset,
+                               track: AVAssetTrack) throws -> (AVAssetReader, AVAssetReaderTrackOutput)? {
+        let reader = try AVAssetReader(asset: asset)
+        let output = AVAssetReaderTrackOutput(track: track, outputSettings: linearPCMReaderSettings)
+        output.alwaysCopiesSampleData = false
+        guard reader.canAdd(output) else { return nil }
+        reader.add(output)
+        guard reader.startReading() else { return nil }
+        return (reader, output)
+    }
+
+    private func accumulateBuckets(from output: AVAssetReaderTrackOutput,
+                                   estimatedTotalSamples: Int,
+                                   sums: inout [CGFloat],
+                                   counts: inout [Int]) {
+        var sampleIndex = 0
         while let sample = output.copyNextSampleBuffer() {
             autoreleasepool {
                 guard let block = CMSampleBufferGetDataBuffer(sample) else {
@@ -231,13 +245,13 @@ struct WaveformVideoRenderer {
                 CMSampleBufferInvalidate(sample)
             }
         }
+    }
 
-        guard reader.status == .completed || reader.status == .reading else { return [] }
-        let bars = sums.enumerated().compactMap { index, sum -> CGFloat? in
+    private func averageBuckets(sums: [CGFloat], counts: [Int]) -> [CGFloat] {
+        sums.enumerated().compactMap { index, sum -> CGFloat? in
             guard counts[index] > 0 else { return nil }
             return sum / CGFloat(counts[index])
         }
-        return normalizeBars(bars)
     }
 
     private func estimatedSampleCount(for track: AVAssetTrack) async throws -> Int {
@@ -253,13 +267,16 @@ struct WaveformVideoRenderer {
         }
 
         let durationSeconds = max(CMTimeGetSeconds(timeRange.duration), 0)
-        var sampleRate = 44_100.0
-        if let description = formatDescriptions.first {
-            if let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description) {
-                sampleRate = max(streamDescription.pointee.mSampleRate, 1)
-            }
+        return max(Int(durationSeconds * sampleRate(from: formatDescriptions)), 1)
+    }
+
+    private func sampleRate(from formatDescriptions: [CMFormatDescription]) -> Double {
+        let defaultRate = 44_100.0
+        guard let description = formatDescriptions.first,
+              let streamDescription = CMAudioFormatDescriptionGetStreamBasicDescription(description) else {
+            return defaultRate
         }
-        return max(Int(durationSeconds * sampleRate), 1)
+        return max(streamDescription.pointee.mSampleRate, 1)
     }
 
     /// Normalize so the loudest bar reaches full height.
@@ -277,10 +294,10 @@ struct WaveformVideoRenderer {
         let midY = rect.midY
         let minBar: CGFloat = 4
 
-        for (i, value) in bars.enumerated() {
-            let t = CGFloat(i) / CGFloat(max(bars.count, 1))
-            let color = Self.rainbowColor(t: t, lightness: 0.62, saturation: 1, alpha: 1)
-            let x = rect.minX + CGFloat(i) * (barWidth + spacing)
+        for (barIndex, value) in bars.enumerated() {
+            let position = CGFloat(barIndex) / CGFloat(max(bars.count, 1))
+            let color = Self.rainbowColor(t: position, lightness: 0.62, saturation: 1, alpha: 1)
+            let x = rect.minX + CGFloat(barIndex) * (barWidth + spacing)
             let height = max(value * rect.height, minBar)
             let barRect = CGRect(x: x, y: midY - height / 2, width: barWidth, height: height)
             let path = UIBezierPath(roundedRect: barRect, cornerRadius: barWidth / 2)
@@ -311,6 +328,15 @@ struct WaveformVideoRenderer {
         return outputURL
     }
 
+    private struct MuxPipeline {
+        let writer: AVAssetWriter
+        let videoInput: AVAssetWriterInput
+        let adaptor: AVAssetWriterInputPixelBufferAdaptor
+        let audioReader: AVAssetReader
+        let audioOutput: AVAssetReaderTrackOutput
+        let audioInput: AVAssetWriterInput
+    }
+
     private func writeMovie(cover: UIImage,
                             audioURL: URL,
                             duration: CMTime,
@@ -318,6 +344,41 @@ struct WaveformVideoRenderer {
         log.info("RENDER: writeMovie entry")
         guard let cgImage = cover.cgImage else { throw RenderError.pixelBufferFailed }
 
+        let pipeline = try await makeMuxPipeline(audioURL: audioURL, to: url)
+        let writer = pipeline.writer
+
+        guard let buffer = pixelBuffer(from: cgImage) else {
+            writer.cancelWriting()
+            throw RenderError.pixelBufferFailed
+        }
+
+        do {
+            // Both inputs must be fed concurrently — feeding the full video
+            // track while the audio input sits unfed fills the video input's
+            // queue and the muxer deadlocks waiting to interleave audio.
+            async let video: Void = writeVideoTrack(input: pipeline.videoInput,
+                                                    adaptor: pipeline.adaptor,
+                                                    buffer: buffer,
+                                                    duration: duration,
+                                                    writer: writer)
+            async let audio: Void = writeAudioTrack(reader: pipeline.audioReader,
+                                                    output: pipeline.audioOutput,
+                                                    input: pipeline.audioInput,
+                                                    writer: writer)
+            try await video
+            try await audio
+        } catch {
+            log.error("RENDER: writeMovie cancel/fail \(error.localizedDescription)")
+            pipeline.audioReader.cancelReading()
+            writer.cancelWriting()
+            throw error
+        }
+
+        try await finalizeMux(pipeline, duration: duration)
+        log.info("RENDER: writeMovie exit")
+    }
+
+    private func makeMuxPipeline(audioURL: URL, to url: URL) async throws -> MuxPipeline {
         let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
         let videoInput = makeVideoInput()
         let adaptor = makePixelBufferAdaptor(for: videoInput)
@@ -345,35 +406,18 @@ struct WaveformVideoRenderer {
         }
         writer.startSession(atSourceTime: .zero)
 
-        guard let buffer = pixelBuffer(from: cgImage) else {
-            writer.cancelWriting()
-            throw RenderError.pixelBufferFailed
-        }
+        return MuxPipeline(writer: writer,
+                           videoInput: videoInput,
+                           adaptor: adaptor,
+                           audioReader: audioReader,
+                           audioOutput: audioOutput,
+                           audioInput: audioInput)
+    }
 
-        do {
-            // Both inputs must be fed concurrently — feeding the full video
-            // track while the audio input sits unfed fills the video input's
-            // queue and the muxer deadlocks waiting to interleave audio.
-            async let video: Void = writeVideoTrack(input: videoInput,
-                                                    adaptor: adaptor,
-                                                    buffer: buffer,
-                                                    duration: duration,
-                                                    writer: writer)
-            async let audio: Void = writeAudioTrack(reader: audioReader,
-                                                    output: audioOutput,
-                                                    input: audioInput,
-                                                    writer: writer)
-            try await video
-            try await audio
-        } catch {
-            log.error("RENDER: writeMovie cancel/fail \(error.localizedDescription)")
-            audioReader.cancelReading()
-            writer.cancelWriting()
-            throw error
-        }
-
+    private func finalizeMux(_ pipeline: MuxPipeline, duration: CMTime) async throws {
+        let writer = pipeline.writer
         if Task.isCancelled {
-            audioReader.cancelReading()
+            pipeline.audioReader.cancelReading()
             writer.cancelWriting()
             throw CancellationError()
         }
@@ -383,7 +427,6 @@ struct WaveformVideoRenderer {
         if writer.status != .completed {
             throw RenderError.exportFailed(writer.error?.localizedDescription ?? "movie write failed")
         }
-        log.info("RENDER: writeMovie exit")
     }
 
     private func makeVideoInput() -> AVAssetWriterInput {

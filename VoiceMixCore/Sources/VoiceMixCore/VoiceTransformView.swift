@@ -93,21 +93,28 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         case .persona:
             cancel()
         case .record:
-            if isRecording {
-                _ = recorder.stopRecording()
-                stopRecordingTimers()
-                isRecording = false
-            }
+            leaveRecordStep()
             step = .persona
         case .transforming:
             cancelConversion()
-            step = .record
-            statusLine = "Tap to record"
+            returnToRecordStep()
         case .review:
             preparedClip = nil
-            step = .record
-            statusLine = "Tap to record"
+            returnToRecordStep()
         }
+    }
+
+    private func leaveRecordStep() {
+        if isRecording {
+            _ = recorder.stopRecording()
+            stopRecordingTimers()
+            isRecording = false
+        }
+    }
+
+    private func returnToRecordStep() {
+        step = .record
+        statusLine = "Tap to record"
     }
 
     func recordButtonTapped() {
@@ -166,21 +173,32 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         statusLine = "Inserting…"
         onInsert(videoURL) { [weak self] error in
             Task { @MainActor in
-                guard let self else { return }
-                self.isSending = false
-                if let error {
-                    self.log.error("SEND: insertAttachment error \(error.localizedDescription)")
-                    self.statusLine = "Insert failed: \(error.localizedDescription)"
-                } else {
-                    self.log.info("SEND: insertAttachment completed")
-                    self.statusLine = "Added to message — tap Send in Messages"
-                    self.preparedClip = nil
-                    self.step = .persona
-                    self.seedWaveform()
-                    self.onDismiss?()
-                }
+                self?.handleInsertCompletion(error)
             }
         }
+    }
+
+    private func handleInsertCompletion(_ error: Error?) {
+        isSending = false
+        if let error {
+            handleInsertFailure(error)
+        } else {
+            handleInsertSuccess()
+        }
+    }
+
+    private func handleInsertFailure(_ error: Error) {
+        log.error("SEND: insertAttachment error \(error.localizedDescription)")
+        statusLine = "Insert failed: \(error.localizedDescription)"
+    }
+
+    private func handleInsertSuccess() {
+        log.info("SEND: insertAttachment completed")
+        statusLine = "Added to message — tap Send in Messages"
+        preparedClip = nil
+        step = .persona
+        seedWaveform()
+        onDismiss?()
     }
 
     private func beginRecording() {
@@ -244,15 +262,9 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
             do {
                 let clip = try await self.prepareClip(from: recordedURL)
                 try Task.checkCancellation()
-                self.preparedClip = clip
-                self.stopStatusTimer()
-                self.step = .review
-                self.statusLine = "Transformed · \(self.formattedDuration)"
-                self.conversionTask = nil
+                self.finishConversion(with: clip)
             } catch is CancellationError {
-                self.stopStatusTimer()
-                self.statusLine = "Tap to record"
-                self.conversionTask = nil
+                self.handleConversionCancellation()
             } catch {
                 self.log.error("CONVERT: failed \(String(describing: error))")
                 self.stopStatusTimer()
@@ -260,6 +272,20 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.conversionTask = nil
             }
         }
+    }
+
+    private func finishConversion(with clip: PreparedClip) {
+        preparedClip = clip
+        stopStatusTimer()
+        step = .review
+        statusLine = "Transformed · \(formattedDuration)"
+        conversionTask = nil
+    }
+
+    private func handleConversionCancellation() {
+        stopStatusTimer()
+        statusLine = "Tap to record"
+        conversionTask = nil
     }
 
     /// Maps a `ConvertServiceError` to distinct user-visible copy. On transient
@@ -310,13 +336,17 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         let convertedAudioURL = try await service.fetchAudio(audioUrl)
         try Task.checkCancellation()
         let renderer = WaveformVideoRenderer()
-        let sentAudioBars = await renderer.displayBars(fromAudio: convertedAudioURL)
-        if !sentAudioBars.isEmpty {
-            waveformBars = sentAudioBars
-        }
+        await updatePreviewWaveform(using: renderer, audioURL: convertedAudioURL)
         let videoURL = try await renderer.makeVideo(fromAudio: convertedAudioURL,
                                                     personaName: selectedPersona.name)
         return PreparedClip(audioURL: convertedAudioURL, videoURL: videoURL)
+    }
+
+    private func updatePreviewWaveform(using renderer: WaveformVideoRenderer, audioURL: URL) async {
+        let sentAudioBars = await renderer.displayBars(fromAudio: audioURL)
+        if !sentAudioBars.isEmpty {
+            waveformBars = sentAudioBars
+        }
     }
 
     private func cancelConversion() {
@@ -325,22 +355,28 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         stopStatusTimer()
     }
 
+    private func scheduledMainActorTimer(interval: TimeInterval,
+                                         tick: @escaping @MainActor (VoiceTransformViewModel) -> Void) -> Timer {
+        Timer.scheduledTimer(withTimeInterval: interval, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                tick(self)
+            }
+        }
+    }
+
     private func startRecordingTimers() {
         recordTimer?.invalidate()
         levelTimer?.invalidate()
 
-        recordTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isRecording else { return }
-                self.seconds += 0.1
-            }
+        recordTimer = scheduledMainActorTimer(interval: 0.1) { model in
+            guard model.isRecording else { return }
+            model.seconds += 0.1
         }
 
-        levelTimer = Timer.scheduledTimer(withTimeInterval: 0.1, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isRecording else { return }
-                self.pushLiveLevel(self.recorder.normalizedLevel())
-            }
+        levelTimer = scheduledMainActorTimer(interval: 0.1) { model in
+            guard model.isRecording else { return }
+            model.pushLiveLevel(model.recorder.normalizedLevel())
         }
     }
 
@@ -353,12 +389,9 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private func startStatusTimer() {
         statusTimer?.invalidate()
-        statusTimer = Timer.scheduledTimer(withTimeInterval: 0.85, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self else { return }
-                self.statusIndex = min(self.statusIndex + 1, self.transformStatuses.count - 1)
-                self.statusLine = self.transformStatuses[self.statusIndex]
-            }
+        statusTimer = scheduledMainActorTimer(interval: 0.85) { model in
+            model.statusIndex = min(model.statusIndex + 1, model.transformStatuses.count - 1)
+            model.statusLine = model.transformStatuses[model.statusIndex]
         }
     }
 
@@ -369,15 +402,13 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private func startPlaybackTimer() {
         playbackTimer?.invalidate()
-        playbackTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 20.0, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, let player = self.audioPlayer else { return }
-                if player.duration > 0 {
-                    self.playProgress = min(1, player.currentTime / player.duration)
-                }
-                if !player.isPlaying {
-                    self.audioPlayerDidFinishPlaying(player, successfully: true)
-                }
+        playbackTimer = scheduledMainActorTimer(interval: 1.0 / 20.0) { model in
+            guard let player = model.audioPlayer else { return }
+            if player.duration > 0 {
+                model.playProgress = min(1, player.currentTime / player.duration)
+            }
+            if !player.isPlaying {
+                model.audioPlayerDidFinishPlaying(player, successfully: true)
             }
         }
     }
@@ -433,9 +464,13 @@ extension VoiceTransformViewModel: AVAudioPlayerDelegate {
 
 public struct VoiceTransformView: View {
     @ObservedObject var model: VoiceTransformViewModel
+    @State private var personaScrollPositionID: String?
+    @State private var personaAllowsMultiItemScroll = false
+    @State private var personaScrollUnlockToken = UUID()
 
     public init(model: VoiceTransformViewModel) {
         self.model = model
+        _personaScrollPositionID = State(initialValue: model.selectedPersona.id)
     }
 
     public var body: some View {
@@ -452,22 +487,12 @@ public struct VoiceTransformView: View {
                 .offset(y: -230)
 
             VStack(spacing: 0) {
-                Capsule()
-                    .fill(.white.opacity(0.20))
-                    .frame(width: 38, height: 5)
-                    .padding(.top, 10)
-                    .padding(.bottom, 2)
-
                 navBar
-
-                TabView(selection: Binding(get: { pageIndex }, set: { _ in })) {
-                    personaPage.tag(0)
-                    recordPage.tag(1)
-                    reviewPage.tag(2)
-                }
-                .tabViewStyle(.page(indexDisplayMode: .never))
-                .animation(.snappy(duration: 0.42), value: pageIndex)
+                    .layoutPriority(1)
+                currentPage
+                    .animation(.snappy(duration: 0.42), value: pageIndex)
             }
+            .padding(.top, 10)
         }
         .preferredColorScheme(.dark)
     }
@@ -477,6 +502,18 @@ public struct VoiceTransformView: View {
         case .persona: return 0
         case .record, .transforming: return 1
         case .review: return 2
+        }
+    }
+
+    @ViewBuilder
+    private var currentPage: some View {
+        switch model.step {
+        case .persona:
+            personaPage
+        case .record, .transforming:
+            recordPage
+        case .review:
+            reviewPage
         }
     }
 
@@ -559,7 +596,7 @@ public struct VoiceTransformView: View {
 
     private var personaCarousel: some View {
         GeometryReader { geo in
-            let cardWidth: CGFloat = 124
+            let cardWidth: CGFloat = 146
             let sidePadding = max(0, (geo.size.width - cardWidth) / 2)
             if #available(iOS 17.0, *) {
                 snapCarousel(cardWidth: cardWidth, sidePadding: sidePadding)
@@ -567,56 +604,92 @@ public struct VoiceTransformView: View {
                 legacyCarousel(cardWidth: cardWidth, sidePadding: sidePadding)
             }
         }
-        .frame(height: 156)
+        .frame(height: 188)
     }
 
     @available(iOS 17.0, *)
     private func snapCarousel(cardWidth: CGFloat, sidePadding: CGFloat) -> some View {
-        ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 10) {
-                ForEach(VoicePersona.all) { persona in
-                    personaButton(persona)
+        let itemSpacing: CGFloat = 18
+        return ScrollViewReader { proxy in
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: itemSpacing) {
+                    ForEach(VoicePersona.all) { persona in
+                        personaButton(persona) {
+                            let unlockToken = UUID()
+                            personaScrollUnlockToken = unlockToken
+                            personaAllowsMultiItemScroll = true
+                            withAnimation(.snappy(duration: 0.28)) {
+                                personaScrollPositionID = persona.id
+                                model.selectedPersona = persona
+                                proxy.scrollTo(persona.id, anchor: .center)
+                            }
+                            Task { @MainActor in
+                                try? await Task.sleep(nanoseconds: 420_000_000)
+                                if personaScrollUnlockToken == unlockToken {
+                                    personaAllowsMultiItemScroll = false
+                                }
+                            }
+                        }
                         .frame(width: cardWidth)
                         .scrollTransition(.interactive, axis: .horizontal) { content, phase in
                             let distance = min(abs(phase.value), 1)
                             return content
-                                .scaleEffect(1 - distance * 0.2)
-                                .opacity(1 - distance * 0.5)
+                                .scaleEffect(1 - distance * 0.16)
+                                .opacity(1 - distance * 0.46)
                         }
                         .id(persona.id)
+                    }
+                }
+                .scrollTargetLayout()
+                .padding(.horizontal, sidePadding)
+                .padding(.vertical, 18)
+            }
+            .scrollContentBackground(.hidden)
+            .scrollTargetBehavior(PersonaCarouselCenterTargetBehavior(itemStride: cardWidth + itemSpacing,
+                                                                      limitsToSingleStep: !personaAllowsMultiItemScroll))
+            .scrollPosition(id: Binding(
+                get: { personaScrollPositionID },
+                set: { newID in
+                    personaScrollPositionID = newID
+                    if let newID,
+                       let persona = VoicePersona.all.first(where: { $0.id == newID }) {
+                        model.selectedPersona = persona
+                    }
+                }
+            ), anchor: .center)
+            .onAppear {
+                let unlockToken = UUID()
+                personaScrollUnlockToken = unlockToken
+                personaAllowsMultiItemScroll = true
+                personaScrollPositionID = model.selectedPersona.id
+                DispatchQueue.main.async {
+                    proxy.scrollTo(model.selectedPersona.id, anchor: .center)
+                }
+                Task { @MainActor in
+                    try? await Task.sleep(nanoseconds: 420_000_000)
+                    if personaScrollUnlockToken == unlockToken {
+                        personaAllowsMultiItemScroll = false
+                    }
                 }
             }
-            .scrollTargetLayout()
-            .padding(.horizontal, sidePadding)
-            .padding(.vertical, 14)
         }
-        .scrollContentBackground(.hidden)
-        .scrollTargetBehavior(.viewAligned(limitBehavior: .always))
-        .scrollPosition(id: Binding(
-            get: { model.selectedPersona.id },
-            set: { newID in
-                if let newID, let persona = VoicePersona.all.first(where: { $0.id == newID }) {
-                    model.selectedPersona = persona
-                }
-            }
-        ))
     }
 
     private func legacyCarousel(cardWidth: CGFloat, sidePadding: CGFloat) -> some View {
         ScrollViewReader { proxy in
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 10) {
+                HStack(spacing: 18) {
                     ForEach(VoicePersona.all) { persona in
                         personaButton(persona)
                             .frame(width: cardWidth)
-                            .scaleEffect(model.selectedPersona == persona ? 1 : 0.8)
-                            .opacity(model.selectedPersona == persona ? 1 : 0.5)
+                            .scaleEffect(model.selectedPersona == persona ? 1 : 0.84)
+                            .opacity(model.selectedPersona == persona ? 1 : 0.54)
                             .animation(.easeOut(duration: 0.25), value: model.selectedPersona)
                             .id(persona.id)
                     }
                 }
                 .padding(.horizontal, sidePadding)
-                .padding(.vertical, 14)
+                .padding(.vertical, 18)
             }
             .scrollContentBackground(.hidden)
             .onAppear { proxy.scrollTo(model.selectedPersona.id, anchor: .center) }
@@ -628,49 +701,61 @@ public struct VoiceTransformView: View {
         }
     }
 
-    private func personaButton(_ persona: VoicePersona) -> some View {
+    private func personaButton(_ persona: VoicePersona, onSelect: (() -> Void)? = nil) -> some View {
         let selected = model.selectedPersona == persona
         return Button {
-            model.selectedPersona = persona
-        } label: {
-            VStack(spacing: 10) {
-                PersonaAvatarView(persona: persona, size: 96, selected: selected)
-                Text(persona.name)
-                    .font(.system(size: 15, weight: selected ? .bold : .medium))
-                    .foregroundStyle(selected ? .white : .white.opacity(0.55))
+            if let onSelect {
+                onSelect()
+            } else {
+                withAnimation(.snappy(duration: 0.28)) {
+                    personaScrollPositionID = persona.id
+                    model.selectedPersona = persona
+                }
             }
+        } label: {
+            VStack(spacing: 9) {
+                PersonaAvatarView(persona: persona,
+                                  size: selected ? 112 : 88,
+                                  selected: selected)
+                    .frame(width: 112, height: 112)
+
+                Text(persona.name)
+                    .font(.system(size: selected ? 16 : 14, weight: selected ? .bold : .medium))
+                    .foregroundStyle(selected ? .white : .white.opacity(0.55))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.78)
+            }
+            .frame(width: 146, height: 150)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
     }
 
     private var recordPage: some View {
         VStack(spacing: 0) {
-            personaChip(showLiveBadge: model.isRecording)
-                .padding(.top, 6)
-
             Spacer(minLength: 0)
 
             NeonWaveformView(mode: recordWaveformMode,
                              bars: model.waveformBars,
                              progress: 0)
-                .frame(height: 130)
+                .frame(height: 92)
                 .padding(.horizontal, 24)
 
             Spacer(minLength: 0)
 
             statusView
-                .frame(height: 30)
-                .padding(.bottom, 10)
+                .frame(height: 24)
+                .padding(.bottom, 4)
 
             recordControl
-                .frame(height: 84)
+                .frame(height: 72)
 
             Text(model.isRecording ? "Tap to stop" : model.step == .transforming ? "" : "Tap to record")
                 .font(.system(size: 12.5))
                 .foregroundStyle(.white.opacity(0.35))
-                .frame(height: 16)
-                .padding(.top, 8)
-                .padding(.bottom, 16)
+                .frame(height: 14)
+                .padding(.top, 2)
+                .padding(.bottom, 6)
         }
     }
 
@@ -706,49 +791,58 @@ public struct VoiceTransformView: View {
     @ViewBuilder
     private var recordControl: some View {
         if model.step == .transforming {
-            ProgressView()
-                .tint(model.selectedPersona.color2)
-                .scaleEffect(1.45)
+            transformingControl
         } else if model.isRecording {
-            Button { model.recordButtonTapped() } label: {
-                ZStack {
-                    Circle()
-                        .stroke(.white.opacity(0.50), lineWidth: 4)
-                        .frame(width: 76, height: 76)
-                    RoundedRectangle(cornerRadius: 7)
-                        .fill(Color(hex: 0xFF9500))
-                        .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 18)
-                        .frame(width: 28, height: 28)
-                }
-            }
-            .buttonStyle(.plain)
+            stopRecordingButton
         } else {
-            Button { model.recordButtonTapped() } label: {
-                ZStack {
-                    Circle()
-                        .stroke(.white.opacity(0.70), lineWidth: 3)
-                        .frame(width: 80, height: 80)
-                    Circle()
-                        .fill(Color(hex: 0xFF9500))
-                        .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 24)
-                        .frame(width: 60, height: 60)
-                }
-            }
-            .buttonStyle(.plain)
+            startRecordingButton
         }
+    }
+
+    private var transformingControl: some View {
+        ProgressView()
+            .tint(model.selectedPersona.color2)
+            .scaleEffect(1.45)
+    }
+
+    private var stopRecordingButton: some View {
+        Button { model.recordButtonTapped() } label: {
+            ZStack {
+                Circle()
+                    .stroke(.white.opacity(0.50), lineWidth: 4)
+                    .frame(width: 68, height: 68)
+                RoundedRectangle(cornerRadius: 7)
+                    .fill(Color(hex: 0xFF9500))
+                    .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 18)
+                    .frame(width: 26, height: 26)
+            }
+        }
+        .buttonStyle(.plain)
+    }
+
+    private var startRecordingButton: some View {
+        Button { model.recordButtonTapped() } label: {
+            ZStack {
+                Circle()
+                    .stroke(.white.opacity(0.70), lineWidth: 3)
+                    .frame(width: 72, height: 72)
+                Circle()
+                    .fill(Color(hex: 0xFF9500))
+                    .shadow(color: Color(hex: 0xFF9500).opacity(0.70), radius: 24)
+                    .frame(width: 54, height: 54)
+            }
+        }
+        .buttonStyle(.plain)
     }
 
     private var reviewPage: some View {
         VStack(spacing: 0) {
-            personaChip(showLiveBadge: false)
-                .padding(.top, 6)
-
             Spacer(minLength: 0)
 
             NeonWaveformView(mode: model.isPlaying ? .playing : .ready,
                              bars: model.waveformBars,
                              progress: model.playProgress)
-                .frame(height: 130)
+                .frame(height: 92)
                 .padding(.horizontal, 24)
 
             Spacer(minLength: 0)
@@ -756,73 +850,79 @@ public struct VoiceTransformView: View {
             Text("Transformed · \(model.formattedDuration)")
                 .font(.system(size: 13.5))
                 .foregroundStyle(.white.opacity(0.50))
-                .padding(.bottom, 14)
+                .padding(.bottom, 8)
 
             HStack(spacing: 28) {
-                VStack(spacing: 10) {
-                    Button { model.redo() } label: {
-                        Circle()
-                            .fill(.white.opacity(0.10))
-                            .frame(width: 54, height: 54)
-                            .overlay {
-                                Image(systemName: "arrow.counterclockwise")
-                                    .font(.system(size: 22, weight: .medium))
-                                    .foregroundStyle(.white.opacity(0.70))
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    Text("Redo")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.40))
+                reviewAction(label: "Redo", size: 54, action: { model.redo() }) {
+                    Circle()
+                        .fill(.white.opacity(0.10))
+                        .frame(width: 54, height: 54)
+                        .overlay {
+                            Image(systemName: "arrow.counterclockwise")
+                                .font(.system(size: 22, weight: .medium))
+                                .foregroundStyle(.white.opacity(0.70))
+                        }
                 }
-                .frame(width: 54)
 
-                VStack(spacing: 10) {
-                    Button { model.togglePlayback() } label: {
-                        Circle()
-                            .fill(LinearGradient(colors: [model.selectedPersona.color1, model.selectedPersona.color2],
-                                                 startPoint: .topLeading,
-                                                 endPoint: .bottomTrailing))
-                            .shadow(color: model.selectedPersona.color2.opacity(0.55), radius: 28)
-                            .frame(width: 80, height: 80)
-                            .overlay {
-                                Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
-                                    .font(.system(size: 28, weight: .bold))
-                                    .foregroundStyle(.white)
-                                    .offset(x: model.isPlaying ? 0 : 2)
-                            }
-                    }
-                    .buttonStyle(.plain)
-                    Text(model.isPlaying ? "Playing" : "Preview")
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.40))
+                reviewAction(label: model.isPlaying ? "Playing" : "Preview",
+                             size: 80,
+                             action: { model.togglePlayback() }) {
+                    Circle()
+                        .fill(LinearGradient(colors: [model.selectedPersona.color1, model.selectedPersona.color2],
+                                             startPoint: .topLeading,
+                                             endPoint: .bottomTrailing))
+                        .shadow(color: model.selectedPersona.color2.opacity(0.55), radius: 28)
+                        .frame(width: 80, height: 80)
+                        .overlay {
+                            Image(systemName: model.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 28, weight: .bold))
+                                .foregroundStyle(.white)
+                                .offset(x: model.isPlaying ? 0 : 2)
+                        }
                 }
-                .frame(width: 80)
 
                 Color.clear.frame(width: 54)
             }
-            .frame(height: 108)
-            .padding(.bottom, 16)
+            .frame(height: 102)
+            .padding(.bottom, 6)
         }
     }
 
-    private func personaChip(showLiveBadge: Bool) -> some View {
-        VStack(spacing: 8) {
-            PersonaAvatarView(persona: model.selectedPersona, size: 56, selected: true)
-            HStack(spacing: 8) {
-                Text(model.selectedPersona.name)
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(.white)
-                if showLiveBadge {
-                    Text("LIVE MIC")
-                        .font(.system(size: 10.5, weight: .bold))
-                        .foregroundStyle(Color(hex: 0x34D399))
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color(hex: 0x34D399).opacity(0.16), in: RoundedRectangle(cornerRadius: 5))
-                }
+    private func reviewAction<Icon: View>(label: String,
+                                          size: CGFloat,
+                                          action: @escaping () -> Void,
+                                          @ViewBuilder icon: () -> Icon) -> some View {
+        VStack(spacing: 10) {
+            Button(action: action) {
+                icon()
             }
+            .buttonStyle(.plain)
+            Text(label)
+                .font(.system(size: 11.5))
+                .foregroundStyle(.white.opacity(0.40))
         }
+        .frame(width: size)
+    }
+
+}
+
+@available(iOS 17.0, *)
+private struct PersonaCarouselCenterTargetBehavior: ScrollTargetBehavior {
+    let itemStride: CGFloat
+    let limitsToSingleStep: Bool
+
+    func updateTarget(_ target: inout ScrollTarget, context: TargetContext) {
+        guard itemStride > 0 else { return }
+        guard limitsToSingleStep else { return }
+
+        let proposedIndex = (target.rect.minX / itemStride).rounded()
+        let currentIndex = (context.originalTarget.rect.minX / itemStride).rounded()
+        let targetIndex = max(currentIndex - 1, min(currentIndex + 1, proposedIndex))
+
+        let maxOffset = max(0, context.contentSize.width - context.containerSize.width)
+        let maxIndex = (maxOffset / itemStride).rounded()
+        let centeredOffset = max(0, min(targetIndex, maxIndex)) * itemStride
+        target.rect.origin.x = max(0, min(centeredOffset, maxOffset))
     }
 }
 
@@ -837,24 +937,36 @@ struct PersonaAvatarView: View {
                                  startPoint: .topLeading,
                                  endPoint: .bottomTrailing))
             .frame(width: size, height: size)
-            .overlay {
-                Text(persona.monogram)
-                    .font(.system(size: size * 0.42, weight: .bold))
-                    .foregroundStyle(.white)
-            }
+            .overlay { avatarContent }
             .shadow(color: selected ? persona.color2.opacity(0.65) : .black.opacity(0.40),
                     radius: selected ? 20 : 8,
                     y: selected ? 0 : 4)
-            .overlay {
-                if selected {
-                    Circle()
-                        .stroke(Color(hex: 0x0D0D10), lineWidth: 2.5)
-                        .padding(-2.5)
-                    Circle()
-                        .stroke(persona.color2, lineWidth: 2)
-                        .padding(-5)
-                }
-            }
+    }
+
+    /// Prefers the persona's cartoon art; falls back to the SF Symbol placeholder when the
+    /// artwork hasn't shipped yet — so every slot renders sensibly either way.
+    @ViewBuilder
+    private var avatarContent: some View {
+        if let image = personaImage {
+            // Inset inside the gradient so the colored ring stays visible around the art.
+            Image(uiImage: image)
+                .resizable()
+                .scaledToFill()
+                .frame(width: size * 0.82, height: size * 0.82)
+                .clipShape(Circle())
+                .accessibilityLabel(persona.name)
+        } else {
+            Image(systemName: persona.placeholderSymbol)
+                .font(.system(size: size * 0.40, weight: .semibold))
+                .foregroundStyle(.white)
+                .accessibilityLabel(persona.name)
+        }
+    }
+
+    /// The persona's cartoon from the (extension) app bundle, or nil when no asset is present.
+    private var personaImage: UIImage? {
+        guard let imageName = persona.imageName else { return nil }
+        return UIImage(named: imageName)
     }
 }
 
@@ -878,6 +990,11 @@ struct NeonWaveformView: View {
         }
     }
 
+    private struct BarStyle {
+        let amplitude: Double
+        let color: Color
+    }
+
     private func draw(in context: inout GraphicsContext, size: CGSize, time: TimeInterval) {
         let count = 54
         let gap = size.width / CGFloat(count)
@@ -887,39 +1004,52 @@ struct NeonWaveformView: View {
 
         for index in 0..<count {
             let source = index < bars.count ? bars[index] : fallbackBar(index)
-            let t = Double(index) / Double(count)
-            let shimmer = (sin(Double(index) * 0.5 - time * 6) * 0.5) + 0.5
-            let amplitude: Double
-            let color: Color
-
-            switch mode {
-            case .recording:
-                amplitude = source
-                color = Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
-            case .transforming:
-                amplitude = source * (0.35 + 0.65 * shimmer)
-                let drift = (t + time * 0.15).truncatingRemainder(dividingBy: 1)
-                color = Self.rainbowColor(drift, lightness: 0.60 + shimmer * 0.08, saturation: 1, alpha: 1)
-            case .ready:
-                amplitude = source
-                color = Self.rainbowColor(t, lightness: 0.52, saturation: 0.70, alpha: 0.50)
-            case .playing:
-                amplitude = source
-                if t <= progress {
-                    color = Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
-                } else {
-                    color = .white.opacity(0.16)
-                }
-            }
-
-            let height = max(3, CGFloat(amplitude) * maxHalfHeight)
-            let rect = CGRect(x: CGFloat(index) * gap + (gap - barWidth) / 2,
-                              y: midY - height,
-                              width: barWidth,
-                              height: height * 2)
-            let path = Path(roundedRect: rect, cornerRadius: min(barWidth / 2, 6))
-            context.fill(path, with: .color(color))
+            let style = barStyle(index: index, source: source, time: time)
+            let path = barPath(index: index,
+                               amplitude: style.amplitude,
+                               gap: gap,
+                               barWidth: barWidth,
+                               midY: midY,
+                               maxHalfHeight: maxHalfHeight)
+            context.fill(path, with: .color(style.color))
         }
+    }
+
+    private func barStyle(index: Int, source: Double, time: TimeInterval) -> BarStyle {
+        let t = Double(index) / Double(54)
+        let shimmer = (sin(Double(index) * 0.5 - time * 6) * 0.5) + 0.5
+
+        switch mode {
+        case .recording:
+            return BarStyle(amplitude: source,
+                            color: Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1))
+        case .transforming:
+            let drift = (t + time * 0.15).truncatingRemainder(dividingBy: 1)
+            return BarStyle(amplitude: source * (0.35 + 0.65 * shimmer),
+                            color: Self.rainbowColor(drift, lightness: 0.60 + shimmer * 0.08, saturation: 1, alpha: 1))
+        case .ready:
+            return BarStyle(amplitude: source,
+                            color: Self.rainbowColor(t, lightness: 0.52, saturation: 0.70, alpha: 0.50))
+        case .playing:
+            let color = t <= progress
+                ? Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
+                : .white.opacity(0.16)
+            return BarStyle(amplitude: source, color: color)
+        }
+    }
+
+    private func barPath(index: Int,
+                         amplitude: Double,
+                         gap: CGFloat,
+                         barWidth: CGFloat,
+                         midY: CGFloat,
+                         maxHalfHeight: CGFloat) -> Path {
+        let height = max(3, CGFloat(amplitude) * maxHalfHeight)
+        let rect = CGRect(x: CGFloat(index) * gap + (gap - barWidth) / 2,
+                          y: midY - height,
+                          width: barWidth,
+                          height: height * 2)
+        return Path(roundedRect: rect, cornerRadius: min(barWidth / 2, 6))
     }
 
     private func fallbackBar(_ index: Int) -> Double {
@@ -932,6 +1062,17 @@ struct NeonWaveformView: View {
     }
 }
 
-#Preview {
+#Preview("Expanded") {
     VoiceTransformView(model: VoiceTransformViewModel(service: MockConvertService()))
+}
+
+// Approximates the iMessage compact panel (keyboard-height sheet at the bottom).
+// Canvas can't render real Messages chrome — tune the height to match the device.
+#Preview("iMessage compact") {
+    ZStack(alignment: .bottom) {
+        Color(white: 0.92).ignoresSafeArea()
+        VoiceTransformView(model: VoiceTransformViewModel(service: MockConvertService()))
+            .frame(height: 400)
+            .clipShape(RoundedRectangle(cornerRadius: 12))
+    }
 }

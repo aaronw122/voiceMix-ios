@@ -26,75 +26,110 @@ struct VoicePersona: Identifiable, Equatable {
     let name: String
     let tag: String
     let monogram: String
+    /// Asset-catalog name for the persona's cartoon art, resolved from the extension
+    /// bundle at runtime (same place `sample.mp3` lives). When the named asset is absent,
+    /// `PersonaAvatarView` falls back to `placeholderSymbol` — so a slot can ship before
+    /// its art does, and real art drops in later with no code change.
+    let imageName: String?
+    /// SF Symbol shown inside the gradient ring until real cartoon art lands.
+    let placeholderSymbol: String
     let color1: Color
     let color2: Color
     let uiColor1: UIColor
     let uiColor2: UIColor
 
-    /// Phase-1 lineup: the three elevenlabs voices that already exist
-    /// server-side. Trump/Obama (modal) are intentionally absent until the
-    /// backend ships them in phase 2, otherwise their tiles would 404.
+    private init(id: String,
+                 voiceId: String,
+                 engine: VoiceEngine,
+                 name: String,
+                 tag: String,
+                 monogram: String,
+                 imageName: String?,
+                 placeholderSymbol: String,
+                 hex1: UInt32,
+                 hex2: UInt32) {
+        self.id = id
+        self.voiceId = voiceId
+        self.engine = engine
+        self.name = name
+        self.tag = tag
+        self.monogram = monogram
+        self.imageName = imageName
+        self.placeholderSymbol = placeholderSymbol
+        self.color1 = Color(hex: hex1)
+        self.color2 = Color(hex: hex2)
+        self.uiColor1 = UIColor(hex: hex1)
+        self.uiColor2 = UIColor(hex: hex2)
+    }
+
+    // `voiceId` + `engine` are the values the backend accepts on the wire.
+    //   Real fine-tuned voices:   Trump, Dwarkesh                 -> .modal
+    //   Decoys mapped to working elevenlabs voices until real ones ship:
+    //     Femme Fatale (femme-fatale), Elon (old-man),
+    //     Yoda + Batman (femme-fatale)
+    //   All voiceIds above exist on the server /voices, so the DEBUG preflight passes.
+    //   Swap in real voiceIds for the decoys when those voices land.
     static let all: [VoicePersona] = [
-        VoicePersona(id: "femme-fatale",
-                     voiceId: "femme-fatale",
-                     engine: .elevenlabs,
-                     name: "Femme Fatale",
-                     tag: "Sultry · smoky · poised",
-                     monogram: "F",
-                     color1: Color(hex: 0xB24592),
-                     color2: Color(hex: 0x4A1942),
-                     uiColor1: UIColor(hex: 0xB24592),
-                     uiColor2: UIColor(hex: 0x4A1942)),
         VoicePersona(id: "trump",
                      voiceId: "trump",
                      engine: .modal,
                      name: "Trump",
                      tag: "Brash · bold · unmistakable",
                      monogram: "T",
-                     color1: Color(hex: 0xE63946),
-                     color2: Color(hex: 0xF6A21D),
-                     uiColor1: UIColor(hex: 0xE63946),
-                     uiColor2: UIColor(hex: 0xF6A21D)),
-        VoicePersona(id: "obama",
-                     voiceId: "obama",
+                     imageName: "persona-trump",
+                     placeholderSymbol: "megaphone.fill",
+                     hex1: 0xE63946,
+                     hex2: 0xF6A21D),
+        VoicePersona(id: "dwarkesh",
+                     voiceId: "dwarkesh",
                      engine: .modal,
-                     name: "Obama",
-                     tag: "Measured · resonant · calm",
-                     monogram: "O",
-                     color1: Color(hex: 0x2193B0),
-                     color2: Color(hex: 0x6DD5ED),
-                     uiColor1: UIColor(hex: 0x2193B0),
-                     uiColor2: UIColor(hex: 0x6DD5ED)),
-        VoicePersona(id: "queen-elizabeth",
-                     voiceId: "queen_elizabeth",
-                     engine: .modal,
-                     name: "Queen Elizabeth",
-                     tag: "Regal · precise · composed",
-                     monogram: "Q",
-                     color1: Color(hex: 0x8E2DE2),
-                     color2: Color(hex: 0x4A00E0),
-                     uiColor1: UIColor(hex: 0x8E2DE2),
-                     uiColor2: UIColor(hex: 0x4A00E0)),
-        VoicePersona(id: "young-woman",
-                     voiceId: "young-woman",
+                     name: "Dwarkesh",
+                     tag: "Curious · rapid · incisive",
+                     monogram: "D",
+                     imageName: "persona-dwarkesh",
+                     placeholderSymbol: "mic.fill",
+                     hex1: 0x2193B0,
+                     hex2: 0x6DD5ED),
+        VoicePersona(id: "femme-fatale",
+                     voiceId: "femme-fatale",
                      engine: .elevenlabs,
-                     name: "Young Woman",
-                     tag: "Bright · clear · youthful",
-                     monogram: "Y",
-                     color1: Color(hex: 0xF857A6),
-                     color2: Color(hex: 0x9B5CF6),
-                     uiColor1: UIColor(hex: 0xF857A6),
-                     uiColor2: UIColor(hex: 0x9B5CF6)),
-        VoicePersona(id: "old-man",
+                     name: "Femme Fatale",
+                     tag: "Sultry · smoky · poised",
+                     monogram: "F",
+                     imageName: "persona-femme-fatale",
+                     placeholderSymbol: "sparkles",
+                     hex1: 0xB24592,
+                     hex2: 0x4A1942),
+        VoicePersona(id: "elon",
                      voiceId: "old-man",
                      engine: .elevenlabs,
-                     name: "Old Man",
-                     tag: "Weathered · warm · unhurried",
-                     monogram: "O",
-                     color1: Color(hex: 0xF7B733),
-                     color2: Color(hex: 0xFC4A1A),
-                     uiColor1: UIColor(hex: 0xF7B733),
-                     uiColor2: UIColor(hex: 0xFC4A1A)),
+                     name: "Elon",
+                     tag: "Dry · halting · visionary",
+                     monogram: "E",
+                     imageName: "persona-elon",
+                     placeholderSymbol: "bolt.fill",
+                     hex1: 0x4776E6,
+                     hex2: 0x8E54E9),
+        VoicePersona(id: "yoda",
+                     voiceId: "femme-fatale",
+                     engine: .elevenlabs,
+                     name: "Yoda",
+                     tag: "Wise · ancient · cryptic",
+                     monogram: "Y",
+                     imageName: "persona-yoda",
+                     placeholderSymbol: "wand.and.stars",
+                     hex1: 0x56AB2F,
+                     hex2: 0x1B4332),
+        VoicePersona(id: "batman",
+                     voiceId: "femme-fatale",
+                     engine: .elevenlabs,
+                     name: "Batman",
+                     tag: "Gritty · brooding · low",
+                     monogram: "B",
+                     imageName: "persona-batman",
+                     placeholderSymbol: "moon.stars.fill",
+                     hex1: 0x141E30,
+                     hex2: 0x243B55),
     ]
 }
 

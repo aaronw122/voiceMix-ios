@@ -17,48 +17,79 @@ public struct LiveConvertService: ConvertService {
 
     private let log = Logger(subsystem: "com.aaron.voiceMixer", category: "network")
 
-    public init(baseURL: URL = Config.baseURL, session: URLSession = .shared) {
+    /// A backend convert can take ~70s, which blows past `URLSession.shared`'s
+    /// 60s default request timeout (it throws `NSURLErrorTimedOut`, surfaced as
+    /// `ConvertServiceError.network`). Use a dedicated session with a 120s
+    /// request timeout to leave headroom.
+    public static let convertSession: URLSession = {
+        let config = URLSessionConfiguration.default
+        config.timeoutIntervalForRequest = 120
+        return URLSession(configuration: config)
+    }()
+
+    public init(baseURL: URL = Config.baseURL, session: URLSession = LiveConvertService.convertSession) {
         self.baseURL = baseURL
         self.session = session
     }
 
     public func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
-        let path: String
-        switch engine {
-        case .elevenlabs: path = "convert"
-        case .modal: path = "impersonate"
-        }
-        let endpoint = baseURL.appendingPathComponent(path)
-        var request = URLRequest(url: endpoint)
-        request.httpMethod = "POST"
-
-        // Size guard BEFORE reading the whole file into memory.
-        if let size = try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int,
-           size > Self.maxUploadBytes {
-            log.error("UPLOAD: file too large \(size) bytes > \(Self.maxUploadBytes)")
-            throw ConvertServiceError.fileTooLarge(bytes: size)
-        }
+        try validateUploadSize(of: audioURL)
 
         let boundary = "Boundary-\(UUID().uuidString)"
-        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        let request = makeUploadRequest(for: engine, boundary: boundary)
 
         let audioData = try Data(contentsOf: audioURL)
-        // Both engines use the same body shape: `voiceId` + `audio` only.
         let body = Self.multipartBody(
             boundary: boundary,
             voiceId: voiceId,
             audioData: audioData
         )
 
-        let data: Data
-        let response: URLResponse
+        let (data, response) = try await performUpload(request, body: body)
+        let payload = try validatedPayload(data, response, engine: engine, voiceId: voiceId)
+        return try JSONDecoder().decode(ConvertResponse.self, from: payload)
+    }
+
+    private func endpoint(for engine: VoiceEngine) -> URL {
+        let path: String
+        switch engine {
+        case .elevenlabs: path = "convert"
+        case .modal: path = "impersonate"
+        }
+        return baseURL.appendingPathComponent(path)
+    }
+
+    /// Size guard BEFORE reading the whole file into memory.
+    private func validateUploadSize(of audioURL: URL) throws {
+        if let size = try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int,
+           size > Self.maxUploadBytes {
+            log.error("UPLOAD: file too large \(size) bytes > \(Self.maxUploadBytes)")
+            throw ConvertServiceError.fileTooLarge(bytes: size)
+        }
+    }
+
+    private func makeUploadRequest(for engine: VoiceEngine, boundary: String) -> URLRequest {
+        var request = URLRequest(url: endpoint(for: engine))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        return request
+    }
+
+    private func performUpload(_ request: URLRequest, body: Data) async throws -> (Data, URLResponse) {
         do {
-            (data, response) = try await session.upload(for: request, from: body)
+            return try await session.upload(for: request, from: body)
         } catch {
             log.error("UPLOAD: transport failure \(error.localizedDescription)")
             throw ConvertServiceError.network(underlying: error)
         }
+    }
 
+    private func validatedPayload(
+        _ data: Data,
+        _ response: URLResponse,
+        engine: VoiceEngine,
+        voiceId: String
+    ) throws -> Data {
         guard let http = response as? HTTPURLResponse else {
             throw ConvertServiceError.httpStatus(-1, body: nil)
         }
@@ -67,7 +98,7 @@ public struct LiveConvertService: ConvertService {
             log.error("UPLOAD: HTTP \(http.statusCode) engine=\(engine.rawValue) voiceId=\(voiceId) body=\(bodyText ?? "<none>")")
             throw ConvertServiceError.httpStatus(http.statusCode, body: bodyText)
         }
-        return try JSONDecoder().decode(ConvertResponse.self, from: data)
+        return data
     }
 
     public func fetchAudio(_ audioUrl: URL) async throws -> URL {
@@ -107,19 +138,27 @@ public struct LiveConvertService: ConvertService {
             body.append(string.data(using: .utf8)!)
         }
 
-        // voiceId field
-        append("--\(boundary)\(crlf)")
-        append("Content-Disposition: form-data; name=\"voiceId\"\(crlf)\(crlf)")
-        append("\(voiceId)\(crlf)")
+        func appendVoiceIdField() {
+            append("--\(boundary)\(crlf)")
+            append("Content-Disposition: form-data; name=\"voiceId\"\(crlf)\(crlf)")
+            append("\(voiceId)\(crlf)")
+        }
 
-        // audio file part — fixed filename, no header injection surface.
-        append("--\(boundary)\(crlf)")
-        append("Content-Disposition: form-data; name=\"audio\"; filename=\"recording.m4a\"\(crlf)")
-        append("Content-Type: audio/m4a\(crlf)\(crlf)")
-        body.append(audioData)
-        append(crlf)
+        func appendAudioFileField() {
+            append("--\(boundary)\(crlf)")
+            append("Content-Disposition: form-data; name=\"audio\"; filename=\"recording.m4a\"\(crlf)")
+            append("Content-Type: audio/m4a\(crlf)\(crlf)")
+            body.append(audioData)
+            append(crlf)
+        }
 
-        append("--\(boundary)--\(crlf)")
+        func appendClosingBoundary() {
+            append("--\(boundary)--\(crlf)")
+        }
+
+        appendVoiceIdField()
+        appendAudioFileField()
+        appendClosingBoundary()
         return body
     }
 }
