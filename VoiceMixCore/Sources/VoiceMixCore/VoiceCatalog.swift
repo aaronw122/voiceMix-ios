@@ -62,22 +62,14 @@ struct VoicePersona: Identifiable, Equatable {
         self.uiColor2 = UIColor(hex: hex2)
     }
 
-    // Display is a reskin only: `voiceId` + `engine` are frozen to the values the backend
-    // already accepts, so the wire contract is unchanged. Until backend voices ship, the
-    // newly-named slots map to existing voices —
-    //   Yoda -> obama, Batman -> queen_elizabeth, Dwarkesh -> young-woman, Elon -> old-man
-    // — i.e. they still produce the *old* voice on the wire until those voices land.
+    // `voiceId` + `engine` are the values the backend accepts on the wire.
+    //   Real fine-tuned voices:   Trump, Dwarkesh                 -> .modal
+    //   Decoys mapped to working elevenlabs voices until real ones ship:
+    //     Femme Fatale (femme-fatale), Elon (old-man),
+    //     Yoda + Batman (femme-fatale)
+    //   All voiceIds above exist on the server /voices, so the DEBUG preflight passes.
+    //   Swap in real voiceIds for the decoys when those voices land.
     static let all: [VoicePersona] = [
-        VoicePersona(id: "femme-fatale",
-                     voiceId: "femme-fatale",
-                     engine: .elevenlabs,
-                     name: "Femme Fatale",
-                     tag: "Sultry · smoky · poised",
-                     monogram: "F",
-                     imageName: "persona-femme-fatale",
-                     placeholderSymbol: "sparkles",
-                     hex1: 0xB24592,
-                     hex2: 0x4A1942),
         VoicePersona(id: "trump",
                      voiceId: "trump",
                      engine: .modal,
@@ -88,29 +80,9 @@ struct VoicePersona: Identifiable, Equatable {
                      placeholderSymbol: "megaphone.fill",
                      hex1: 0xE63946,
                      hex2: 0xF6A21D),
-        VoicePersona(id: "yoda",
-                     voiceId: "obama",
-                     engine: .modal,
-                     name: "Yoda",
-                     tag: "Wise · ancient · cryptic",
-                     monogram: "Y",
-                     imageName: "persona-yoda",
-                     placeholderSymbol: "wand.and.stars",
-                     hex1: 0x56AB2F,
-                     hex2: 0x1B4332),
-        VoicePersona(id: "batman",
-                     voiceId: "queen_elizabeth",
-                     engine: .modal,
-                     name: "Batman",
-                     tag: "Gritty · brooding · low",
-                     monogram: "B",
-                     imageName: "persona-batman",
-                     placeholderSymbol: "moon.stars.fill",
-                     hex1: 0x141E30,
-                     hex2: 0x243B55),
         VoicePersona(id: "dwarkesh",
-                     voiceId: "young-woman",
-                     engine: .elevenlabs,
+                     voiceId: "dwarkesh",
+                     engine: .modal,
                      name: "Dwarkesh",
                      tag: "Curious · rapid · incisive",
                      monogram: "D",
@@ -118,6 +90,16 @@ struct VoicePersona: Identifiable, Equatable {
                      placeholderSymbol: "mic.fill",
                      hex1: 0x2193B0,
                      hex2: 0x6DD5ED),
+        VoicePersona(id: "femme-fatale",
+                     voiceId: "femme-fatale",
+                     engine: .elevenlabs,
+                     name: "Femme Fatale",
+                     tag: "Sultry · smoky · poised",
+                     monogram: "F",
+                     imageName: "persona-femme-fatale",
+                     placeholderSymbol: "sparkles",
+                     hex1: 0xB24592,
+                     hex2: 0x4A1942),
         VoicePersona(id: "elon",
                      voiceId: "old-man",
                      engine: .elevenlabs,
@@ -128,6 +110,26 @@ struct VoicePersona: Identifiable, Equatable {
                      placeholderSymbol: "bolt.fill",
                      hex1: 0x4776E6,
                      hex2: 0x8E54E9),
+        VoicePersona(id: "yoda",
+                     voiceId: "femme-fatale",
+                     engine: .elevenlabs,
+                     name: "Yoda",
+                     tag: "Wise · ancient · cryptic",
+                     monogram: "Y",
+                     imageName: "persona-yoda",
+                     placeholderSymbol: "wand.and.stars",
+                     hex1: 0x56AB2F,
+                     hex2: 0x1B4332),
+        VoicePersona(id: "batman",
+                     voiceId: "femme-fatale",
+                     engine: .elevenlabs,
+                     name: "Batman",
+                     tag: "Gritty · brooding · low",
+                     monogram: "B",
+                     imageName: "persona-batman",
+                     placeholderSymbol: "moon.stars.fill",
+                     hex1: 0x141E30,
+                     hex2: 0x243B55),
     ]
 }
 
