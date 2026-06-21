@@ -109,7 +109,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     ///   a manual/max-duration stop. We must NOT leave the mic/session/timers
     ///   running, and must NOT deactivate the session under an active recording
     ///   (that can corrupt the take), so we don't call `stopPlayback()` here.
-    public func pausePlaybackForResignActive() {
+    public func handleResignActivePreservingConversion() {
         if isRecording {
             stopAndConvert()
         } else if isPlaying {
@@ -306,7 +306,6 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         if let size = try? FileManager.default.attributesOfItem(atPath: recordedURL.path)[.size] as? Int,
            size > Self.maxRecordingBytes {
             log.error("CONVERT: recording too large \(size) bytes > \(Self.maxRecordingBytes)")
-            stopRecordingTimers()
             handleConversionFailure(ConvertServiceError.fileTooLarge(bytes: size), recordedURL: recordedURL)
             return
         }

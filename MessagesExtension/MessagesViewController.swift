@@ -64,7 +64,7 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
-        viewModel.pausePlaybackForResignActive()
+        viewModel.handleResignActivePreservingConversion()
     }
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
