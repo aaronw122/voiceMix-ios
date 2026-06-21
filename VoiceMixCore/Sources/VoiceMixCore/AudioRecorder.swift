@@ -7,10 +7,15 @@ import AVFoundation
 public final class AudioRecorder: NSObject {
     public override init() { super.init() }
 
+    // iMessage voice clips may run up to two minutes.
     static let maxDurationSeconds: TimeInterval = 120
 
     private var recorder: AVAudioRecorder?
     private var maxDurationTimer: Timer?
+    /// When the current recording started, used as a wall-clock backstop on the
+    /// cap. The run-loop `maxDurationTimer` may fire late if the extension is
+    /// suspended, so we also enforce elapsed duration on stop.
+    private var recordingStartedAt: Date?
     private(set) var fileURL: URL?
     var didReachMaxDuration: ((URL?) -> Void)?
 
@@ -41,6 +46,7 @@ public final class AudioRecorder: NSObject {
 
         self.recorder = recorder
         self.fileURL = url
+        self.recordingStartedAt = Date()
         scheduleMaxDurationTimer()
     }
 
@@ -49,12 +55,21 @@ public final class AudioRecorder: NSObject {
     func stopRecording() -> URL? {
         maxDurationTimer?.invalidate()
         maxDurationTimer = nil
+        recordingStartedAt = nil
         recorder?.stop()
         let url = fileURL
         recorder = nil
         // Release the session so other audio (playback bubble) behaves nicely.
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         return url
+    }
+
+    /// Whether the active recording has run past the cap by wall-clock time.
+    /// A backstop for the run-loop `maxDurationTimer`, which can fire late if
+    /// the extension was suspended; callers can enforce the cap on stop.
+    var hasExceededMaxDuration: Bool {
+        guard let recordingStartedAt else { return false }
+        return Date().timeIntervalSince(recordingStartedAt) >= Self.maxDurationSeconds
     }
 
     /// Current mic level normalized to 0...1 for the live waveform.
