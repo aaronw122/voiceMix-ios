@@ -80,6 +80,27 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         onDismiss?()
     }
 
+    /// Messages collapsed us to the compact presentation. Preserve in-flight work
+    /// and a ready result — only reset from the idle pre-record steps — so a
+    /// collapse never discards a conversion the user is waiting on.
+    public func handlePresentationCollapse() {
+        switch step {
+        case .transforming, .review:
+            return
+        case .persona, .record:
+            goBack()
+        }
+    }
+
+    /// The extension resigned active (screen dim/lock, app switch). Stop playback
+    /// but deliberately DON'T cancel an in-flight conversion: an app extension
+    /// can't keep the screen awake, so a dim or lock must not destroy work the
+    /// user is waiting on. The conversion holds a `performExpiringActivity`
+    /// assertion (see `startConversion`) to keep running across the transition.
+    public func handleResignActive() {
+        stopPlayback()
+    }
+
     func nextFromPersona() {
         step = .record
         statusLine = "Tap to record"
@@ -257,7 +278,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         startStatusTimer()
 
         conversionTask?.cancel()
-        conversionTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             do {
                 let clip = try await self.prepareClip(from: recordedURL)
@@ -271,6 +292,31 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.handleConversionFailure(error, recordedURL: recordedURL)
                 self.conversionTask = nil
             }
+        }
+        conversionTask = task
+        Self.holdBackgroundActivity(for: task)
+    }
+
+    /// Hold an OS-sanctioned background-execution assertion for the lifetime of a
+    /// conversion. `performExpiringActivity` is the app-extension-legal equivalent
+    /// of `beginBackgroundTask` (which needs `UIApplication`, unavailable here): it
+    /// buys the heavy mp4 encode time to finish if the screen dims/locks mid-process,
+    /// and signals expiry so we cancel cleanly — the renderer already tears down via
+    /// `Task.checkCancellation()` — instead of being jetsam-killed mid-encode.
+    private static func holdBackgroundActivity(for task: Task<Void, Never>) {
+        ProcessInfo.processInfo.performExpiringActivity(withReason: "voiceMix conversion") { expired in
+            if expired {
+                task.cancel()
+                return
+            }
+            // Block this background queue until the conversion finishes so the
+            // assertion stays alive for the encode's full duration.
+            let done = DispatchSemaphore(value: 0)
+            Task {
+                _ = await task.value
+                done.signal()
+            }
+            done.wait()
         }
     }
 

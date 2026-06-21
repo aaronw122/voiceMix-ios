@@ -61,13 +61,17 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
-        viewModel.cancel()
+        // A dim/lock/app-switch must not discard an in-flight conversion; the
+        // view model keeps it running (guarded by a background-activity assertion).
+        viewModel.handleResignActive()
     }
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
         if presentationStyle == .compact {
-            viewModel.goBack()
+            // Collapsing preserves in-flight work / a ready result, rather than
+            // cancelling it the way an unconditional goBack() did.
+            viewModel.handlePresentationCollapse()
         }
     }
 

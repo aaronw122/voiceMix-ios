@@ -7,7 +7,7 @@ import AVFoundation
 public final class AudioRecorder: NSObject {
     public override init() { super.init() }
 
-    static let maxDurationSeconds: TimeInterval = 60
+    static let maxDurationSeconds: TimeInterval = 120
 
     private var recorder: AVAudioRecorder?
     private var maxDurationTimer: Timer?
