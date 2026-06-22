@@ -59,9 +59,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         requestExpandedPresentation(reason: "willBecomeActive")
     }
 
-    // Resign-active and compact presentation are lifecycle events, not user
-    // cancels: the view model preserves any in-flight conversion across them.
-
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
         viewModel.handleResignActivePreservingConversion()

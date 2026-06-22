@@ -33,10 +33,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private let service: ConvertService
     private let recorder: AudioRecorder
     private var conversionTask: Task<Void, Never>?
-    /// Identity of the in-flight conversion. A new conversion mints a fresh
-    /// token; any task or background waiter from a cancelled/superseded
-    /// conversion compares against this and becomes a no-op if it no longer
-    /// matches, so a stale task can't mutate the current conversion's UI state.
+    /// Identity of the in-flight conversion; stale tasks/waiters check it and no-op.
     private var conversionToken: UUID?
     private var recordTimer: Timer?
     private var levelTimer: Timer?
@@ -85,9 +82,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         onDismiss?()
     }
 
-    /// Messages collapsed us to the compact presentation. Preserve in-flight work
-    /// and a ready result — only reset from the idle pre-record steps — so a
-    /// collapse never discards a conversion the user is waiting on.
+    /// Collapsing to compact preserves an in-flight/ready conversion; only idle steps reset.
     public func handlePresentationCollapse() {
         switch step {
         case .transforming, .review:
@@ -97,18 +92,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         }
     }
 
-    /// The extension resigned active (screen dim/lock, app switch). Respond by
-    /// state, and deliberately NEVER cancel an in-flight conversion: an app
-    /// extension can't keep the screen awake, so a dim or lock must not destroy
-    /// work the user is waiting on. The conversion holds a
-    /// `performExpiringActivity` assertion (see `startConversion`) to keep
-    /// running across the transition.
-    ///
-    /// - If playing: just stop playback (it's safe to release the session).
-    /// - If recording: finalize the take and start conversion, the same path as
-    ///   a manual/max-duration stop. We must NOT leave the mic/session/timers
-    ///   running, and must NOT deactivate the session under an active recording
-    ///   (that can corrupt the take), so we don't call `stopPlayback()` here.
+    /// On resign (dim/lock/app-switch) never cancel an in-flight conversion. Don't
+    /// deactivate the session under an active recording — finalize the take instead.
     public func handleResignActivePreservingConversion() {
         if isRecording {
             stopAndConvert()
@@ -301,8 +286,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         stopRecordingTimers()
         isRecording = false
 
-        // Fail fast on an oversized take before spending the upload + heavy
-        // mp4 encode. Reuses the existing "too long or large" copy.
+        // Fail fast on an oversized take before the upload + heavy mp4 encode.
         if let size = try? FileManager.default.attributesOfItem(atPath: recordedURL.path)[.size] as? Int,
            size > Self.maxRecordingBytes {
             log.error("CONVERT: recording too large \(size) bytes > \(Self.maxRecordingBytes)")
@@ -315,8 +299,6 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         statusLine = transformStatuses[0]
         startStatusTimer()
 
-        // Mint a fresh identity so a previously-cancelled task (and its
-        // background waiter) can detect it has been superseded.
         let token = UUID()
         conversionToken = token
 
@@ -346,50 +328,27 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         })
     }
 
-    /// Keeps an app-extension-legal background assertion alive while conversion runs.
-    ///
-    /// App extensions cannot use `UIApplication.beginBackgroundTask`, so
-    /// `performExpiringActivity` is the available way to buy best-effort time
-    /// when the screen dims or locks during the mp4 encode. This does NOT
-    /// prevent jetsam or guarantee the encode finishes — it requests a window
-    /// and, on expiry, cancels the task so the renderer (which observes
-    /// `Task.checkCancellation()`) can tear down cleanly instead of being
-    /// killed mid-encode.
-    ///
-    /// `isCurrent` ties the (off-main) waiter to the conversion identity token
-    /// so a stale waiter from a superseded conversion is harmless.
+    /// Best-effort background window for the encode if the screen dims/locks
+    /// (`performExpiringActivity` is the extension-legal `beginBackgroundTask`).
+    /// Cancels the task on expiry; does not prevent jetsam.
     private static func holdBackgroundActivity(for task: Task<Void, Never>,
                                               token: UUID,
                                               isCurrent: @escaping @Sendable () async -> Bool) {
         ProcessInfo.processInfo.performExpiringActivity(withReason: "voiceMix conversion") { expired in
-            // Expiry is delivered first / on its own callback: cancel and bail
-            // before doing anything that could block a thread.
             if expired {
                 task.cancel()
                 return
             }
-            // `performExpiringActivity` documents a background queue; never
-            // block the main thread (a main-actor conversion couldn't progress).
             dispatchPrecondition(condition: .notOnQueue(.main))
 
-            // Block this background queue until the conversion finishes so the
-            // assertion stays alive for the encode's full duration. Run the
-            // awaiter detached so it doesn't inherit main-actor isolation.
+            // Hold the assertion (block this background queue) until conversion ends.
             let done = DispatchSemaphore(value: 0)
             Task.detached {
-                // If this conversion was already superseded, don't keep the
-                // assertion alive on its behalf — release immediately.
-                guard await isCurrent() else {
-                    done.signal()
-                    return
-                }
+                guard await isCurrent() else { done.signal(); return }
                 _ = await task.value
                 done.signal()
             }
-            // Generous failsafe so a hung encode can't pin this thread to
-            // process death. The renderer is independently bounded; this is a
-            // last-resort release of the assertion.
-            _ = done.wait(timeout: .now() + 180)
+            _ = done.wait(timeout: .now() + 180)  // failsafe against a hung encode
         }
     }
 
