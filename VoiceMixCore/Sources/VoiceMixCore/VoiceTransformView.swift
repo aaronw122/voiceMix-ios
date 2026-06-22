@@ -33,6 +33,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private let service: ConvertService
     private let recorder: AudioRecorder
     private var conversionTask: Task<Void, Never>?
+    /// Identity of the in-flight conversion; stale tasks/waiters check it and no-op.
+    private var conversionToken: UUID?
     private var recordTimer: Timer?
     private var levelTimer: Timer?
     private var statusTimer: Timer?
@@ -78,6 +80,26 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
             _ = recorder.stopRecording()
         }
         onDismiss?()
+    }
+
+    /// Collapsing to compact preserves an in-flight/ready conversion; only idle steps reset.
+    public func handlePresentationCollapse() {
+        switch step {
+        case .transforming, .review:
+            return
+        case .persona, .record:
+            goBack()
+        }
+    }
+
+    /// On resign (dim/lock/app-switch) never cancel an in-flight conversion. Don't
+    /// deactivate the session under an active recording — finalize the take instead.
+    public func handleResignActivePreservingConversion() {
+        if isRecording {
+            stopAndConvert()
+        } else if isPlaying {
+            stopPlayback()
+        }
     }
 
     func nextFromPersona() {
@@ -229,6 +251,12 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     private func stopAndConvert() {
+        // Read the wall-clock backstop before stopping clears the start time:
+        // if the run-loop cap timer fired late (e.g. extension suspended), the
+        // clip may have run past the cap and is enforced downstream by size.
+        if recorder.hasExceededMaxDuration {
+            log.info("REC: stop with clip past max duration (timer delivered late)")
+        }
         guard let recordedURL = recorder.stopRecording() else {
             stopRecordingTimers()
             isRecording = false
@@ -248,29 +276,79 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         startConversion(from: recordedURL)
     }
 
+    /// Conservative client-side ceiling on the recorded upload, mirroring the
+    /// backend's 10MB convert limit (`LiveConvertService.maxUploadBytes`). At
+    /// 120s the mp4 encode is the app's #1 crash path, so we fail fast here
+    /// rather than attempt a doomed upload + encode for an oversized take.
+    private static let maxRecordingBytes = 10 * 1024 * 1024
+
     private func startConversion(from recordedURL: URL) {
         stopRecordingTimers()
         isRecording = false
+
+        // Fail fast on an oversized take before the upload + heavy mp4 encode.
+        if let size = try? FileManager.default.attributesOfItem(atPath: recordedURL.path)[.size] as? Int,
+           size > Self.maxRecordingBytes {
+            log.error("CONVERT: recording too large \(size) bytes > \(Self.maxRecordingBytes)")
+            handleConversionFailure(ConvertServiceError.fileTooLarge(bytes: size), recordedURL: recordedURL)
+            return
+        }
+
         step = .transforming
         statusIndex = 0
         statusLine = transformStatuses[0]
         startStatusTimer()
 
+        let token = UUID()
+        conversionToken = token
+
         conversionTask?.cancel()
-        conversionTask = Task { [weak self] in
+        let task = Task { [weak self] in
             guard let self else { return }
             do {
                 let clip = try await self.prepareClip(from: recordedURL)
                 try Task.checkCancellation()
+                guard self.conversionToken == token else { return }
                 self.finishConversion(with: clip)
             } catch is CancellationError {
+                guard self.conversionToken == token else { return }
                 self.handleConversionCancellation()
             } catch {
+                guard self.conversionToken == token else { return }
                 self.log.error("CONVERT: failed \(String(describing: error))")
                 self.stopStatusTimer()
                 self.handleConversionFailure(error, recordedURL: recordedURL)
                 self.conversionTask = nil
+                self.conversionToken = nil
             }
+        }
+        conversionTask = task
+        Self.holdBackgroundActivity(for: task, token: token, isCurrent: { [weak self] in
+            await MainActor.run { self?.conversionToken == token }
+        })
+    }
+
+    /// Best-effort background window for the encode if the screen dims/locks
+    /// (`performExpiringActivity` is the extension-legal `beginBackgroundTask`).
+    /// Cancels the task on expiry; does not prevent jetsam.
+    private static func holdBackgroundActivity(for task: Task<Void, Never>,
+                                              token: UUID,
+                                              isCurrent: @escaping @Sendable () async -> Bool) {
+        ProcessInfo.processInfo.performExpiringActivity(withReason: "voiceMix conversion") { expired in
+            if expired {
+                task.cancel()
+                return
+            }
+            dispatchPrecondition(condition: .notOnQueue(.main))
+
+            // Hold the assertion (block this background queue) until conversion ends.
+            let done = DispatchSemaphore(value: 0)
+            Task.detached {
+                guard await isCurrent() else { done.signal(); return }
+                _ = await task.value
+                done.signal()
+            }
+            _ = done.wait(timeout: .now() + 180)  // failsafe against a hung encode
         }
     }
 
@@ -280,12 +358,14 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         step = .review
         statusLine = "Transformed · \(formattedDuration)"
         conversionTask = nil
+        conversionToken = nil
     }
 
     private func handleConversionCancellation() {
         stopStatusTimer()
         statusLine = "Tap to record"
         conversionTask = nil
+        conversionToken = nil
     }
 
     /// Maps a `ConvertServiceError` to distinct user-visible copy. On transient
@@ -352,6 +432,9 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private func cancelConversion() {
         conversionTask?.cancel()
         conversionTask = nil
+        // Invalidate the identity so the cancelled task (and its background
+        // waiter) can't mutate state for this superseded conversion.
+        conversionToken = nil
         stopStatusTimer()
     }
 

@@ -61,13 +61,13 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
-        viewModel.cancel()
+        viewModel.handleResignActivePreservingConversion()
     }
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
         if presentationStyle == .compact {
-            viewModel.goBack()
+            viewModel.handlePresentationCollapse()
         }
     }
 

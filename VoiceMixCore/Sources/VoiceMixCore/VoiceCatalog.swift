@@ -63,9 +63,9 @@ struct VoicePersona: Identifiable, Equatable {
     }
 
     // `voiceId` + `engine` are the values the backend accepts on the wire.
-    //   Real fine-tuned voices:   Trump, Dwarkesh                 -> .modal
+    //   Real fine-tuned voices:   Trump, Dwarkesh, Elon           -> .modal
     //   Decoys mapped to working elevenlabs voices until real ones ship:
-    //     Femme Fatale (femme-fatale), Elon (old-man),
+    //     Femme Fatale (femme-fatale),
     //     Yoda + Batman (femme-fatale)
     //   All voiceIds above exist on the server /voices, so the DEBUG preflight passes.
     //   Swap in real voiceIds for the decoys when those voices land.
@@ -101,8 +101,8 @@ struct VoicePersona: Identifiable, Equatable {
                      hex1: 0xB24592,
                      hex2: 0x4A1942),
         VoicePersona(id: "elon",
-                     voiceId: "old-man",
-                     engine: .elevenlabs,
+                     voiceId: "elon",
+                     engine: .modal,
                      name: "Elon",
                      tag: "Dry · halting · visionary",
                      monogram: "E",
