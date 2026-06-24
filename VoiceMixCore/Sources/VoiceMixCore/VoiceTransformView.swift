@@ -239,6 +239,12 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         do {
             try recorder.startRecording()
             log.info("REC: startRecording success")
+            // Pre-warm the voice's GPU container NOW so its cold-start overlaps the
+            // recording (saves ~20-60s on the first convert). Detached + best-effort:
+            // never blocks recording, never surfaces an error to the user.
+            let voiceId = selectedPersona.voiceId
+            let engine = selectedPersona.engine
+            Task { await service.warm(voiceId: voiceId, engine: engine) }
             seconds = 0
             isRecording = true
             statusLine = "Tap to stop"

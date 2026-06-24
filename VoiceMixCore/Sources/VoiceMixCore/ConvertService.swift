@@ -19,6 +19,16 @@ public protocol ConvertService {
     /// Fetch the converted audio, returning a durable local `.mp3` file URL
     /// (one that won't be cleaned up before it's inserted into the thread).
     func fetchAudio(_ audioUrl: URL) async throws -> URL
+    /// Best-effort pre-warm of a modal voice's GPU container, called the instant
+    /// recording starts so its ~20-60s cold-start overlaps the recording instead
+    /// of stacking onto the convert request. Fire-and-forget: never throws.
+    func warm(voiceId: String, engine: VoiceEngine) async
+}
+
+public extension ConvertService {
+    /// Default no-op so mocks and engines without a cold-start (ElevenLabs) need
+    /// not implement warming — only `LiveConvertService` overrides this.
+    func warm(voiceId: String, engine: VoiceEngine) async {}
 }
 
 /// Status-specific failures so callers can show distinct, actionable copy

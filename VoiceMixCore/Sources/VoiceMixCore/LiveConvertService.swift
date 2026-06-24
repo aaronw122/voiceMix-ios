@@ -50,6 +50,24 @@ public struct LiveConvertService: ConvertService {
         return try JSONDecoder().decode(ConvertResponse.self, from: payload)
     }
 
+    /// Best-effort cold-start trigger. Posts the voiceId to `/warm`; the backend
+    /// returns 202 immediately after kicking off the Modal container boot, so this
+    /// call is fast and we don't wait on (or care about) the GPU warming itself.
+    /// Only modal voices have a cold-start — ElevenLabs is skipped. Never throws.
+    public func warm(voiceId: String, engine: VoiceEngine) async {
+        guard engine == .modal else { return }
+        let boundary = "Boundary-\(UUID().uuidString)"
+        var request = URLRequest(url: baseURL.appendingPathComponent("warm"))
+        request.httpMethod = "POST"
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.httpBody = Self.warmBody(boundary: boundary, voiceId: voiceId)
+        do {
+            _ = try await session.data(for: request)
+        } catch {
+            log.debug("WARM: best-effort ping failed \(error.localizedDescription)")
+        }
+    }
+
     private func endpoint(for engine: VoiceEngine) -> URL {
         let path: String
         switch engine {
@@ -159,6 +177,19 @@ public struct LiveConvertService: ConvertService {
         appendVoiceIdField()
         appendAudioFileField()
         appendClosingBoundary()
+        return body
+    }
+
+    /// Builds the `/warm` multipart body — just the `voiceId` text field (no audio).
+    /// `internal` (not `private`) so the request shape is testable.
+    static func warmBody(boundary: String, voiceId: String) -> Data {
+        var body = Data()
+        let crlf = "\r\n"
+        func append(_ string: String) { body.append(string.data(using: .utf8)!) }
+        append("--\(boundary)\(crlf)")
+        append("Content-Disposition: form-data; name=\"voiceId\"\(crlf)\(crlf)")
+        append("\(voiceId)\(crlf)")
+        append("--\(boundary)--\(crlf)")
         return body
     }
 }
