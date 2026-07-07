@@ -62,20 +62,17 @@ struct VoicePersona: Identifiable, Equatable {
         self.uiColor2 = UIColor(hex: hex2)
     }
 
-    // `voiceId` + `engine` are the values the backend accepts on the wire.
-    //   Real fine-tuned voices:   Trump, Dwarkesh, Elon           -> .modal
-    //   Decoys mapped to working elevenlabs voices until real ones ship:
-    //     Femme Fatale (femme-fatale),
-    //     Yoda + Batman (femme-fatale)
+    // `voiceId` + `engine` are the values the backend accepts on the wire — the
+    // display `name` is cosmetic and can differ from the voiceId.
+    //   Real fine-tuned voices:   el-prez, dwarkesh, tech-magnate  -> .modal
     //   All voiceIds above exist on the server /voices, so the DEBUG preflight passes.
-    //   Swap in real voiceIds for the decoys when those voices land.
     static let all: [VoicePersona] = [
-        VoicePersona(id: "trump",
-                     voiceId: "trump",
+        VoicePersona(id: "el-prez",
+                     voiceId: "el-prez",
                      engine: .modal,
-                     name: "Trump",
+                     name: "El Prez",
                      tag: "Brash · bold · unmistakable",
-                     monogram: "T",
+                     monogram: "E",
                      imageName: "persona-trump",
                      placeholderSymbol: "megaphone.fill",
                      hex1: 0xE63946,
@@ -90,46 +87,16 @@ struct VoicePersona: Identifiable, Equatable {
                      placeholderSymbol: "mic.fill",
                      hex1: 0x2193B0,
                      hex2: 0x6DD5ED),
-        VoicePersona(id: "femme-fatale",
-                     voiceId: "femme-fatale",
-                     engine: .elevenlabs,
-                     name: "Femme Fatale",
-                     tag: "Sultry · smoky · poised",
-                     monogram: "F",
-                     imageName: "persona-femme-fatale",
-                     placeholderSymbol: "sparkles",
-                     hex1: 0xB24592,
-                     hex2: 0x4A1942),
-        VoicePersona(id: "elon",
-                     voiceId: "elon",
+        VoicePersona(id: "tech-magnate",
+                     voiceId: "tech-magnate",
                      engine: .modal,
-                     name: "Elon",
+                     name: "Tech Magnate",
                      tag: "Dry · halting · visionary",
-                     monogram: "E",
+                     monogram: "T",
                      imageName: "persona-elon",
                      placeholderSymbol: "bolt.fill",
                      hex1: 0x4776E6,
                      hex2: 0x8E54E9),
-        VoicePersona(id: "yoda",
-                     voiceId: "femme-fatale",
-                     engine: .elevenlabs,
-                     name: "Yoda",
-                     tag: "Wise · ancient · cryptic",
-                     monogram: "Y",
-                     imageName: "persona-yoda",
-                     placeholderSymbol: "wand.and.stars",
-                     hex1: 0x56AB2F,
-                     hex2: 0x1B4332),
-        VoicePersona(id: "batman",
-                     voiceId: "femme-fatale",
-                     engine: .elevenlabs,
-                     name: "Batman",
-                     tag: "Gritty · brooding · low",
-                     monogram: "B",
-                     imageName: "persona-batman",
-                     placeholderSymbol: "moon.stars.fill",
-                     hex1: 0x141E30,
-                     hex2: 0x243B55),
     ]
 }
 
