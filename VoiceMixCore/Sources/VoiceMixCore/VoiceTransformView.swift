@@ -922,9 +922,11 @@ public struct VoiceTransformView: View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
 
+            // Pin to the mp4's 600:140 so the preview matches the sent bubble.
             NeonWaveformView(mode: model.isPlaying ? .playing : .ready,
                              bars: model.waveformBars,
                              progress: model.playProgress)
+                .aspectRatio(600.0 / 140.0, contentMode: .fit)
                 .frame(height: 92)
                 .padding(.horizontal, 24)
 
@@ -1079,6 +1081,35 @@ struct NeonWaveformView: View {
     }
 
     private func draw(in context: inout GraphicsContext, size: CGSize, time: TimeInterval) {
+        switch mode {
+        case .ready, .playing:
+            drawProgress(in: &context, size: size)
+        case .recording, .transforming:
+            drawActive(in: &context, size: size, time: time)
+        }
+    }
+
+    /// Shared with the mp4 renderer via `WaveformLayout`: played bars fill to
+    /// rainbow, unplayed bars fade, a playhead leads the fill edge. `.ready`
+    /// renders fully faded (progress forced to 0) so pressing play only lights
+    /// bars up — no recolor pop. (`.ready` deliberately ignores the passed
+    /// progress, which at natural finish is momentarily 1.0.)
+    private func drawProgress(in context: inout GraphicsContext, size: CGSize) {
+        let effectiveProgress = mode == .playing ? progress : 0
+        let frame = WaveformLayout.frame(bars: bars, progress: effectiveProgress, size: size)
+        for bar in frame.bars {
+            context.fill(Path(roundedRect: bar.rect, cornerRadius: frame.cornerRadius),
+                         with: .color(Color(bar.color)))
+        }
+        if let playheadX = frame.playheadX {
+            let rule = CGRect(x: playheadX - 1, y: 0, width: 2, height: size.height)
+            context.fill(Path(roundedRect: rule, cornerRadius: 1),
+                         with: .color(Color(frame.playhead)))
+        }
+    }
+
+    /// Live recording / transforming animation (rainbow + shimmer, unchanged).
+    private func drawActive(in context: inout GraphicsContext, size: CGSize, time: TimeInterval) {
         let count = 54
         let gap = size.width / CGFloat(count)
         let barWidth = max(2.5, gap * 0.42)
@@ -1103,21 +1134,13 @@ struct NeonWaveformView: View {
         let shimmer = (sin(Double(index) * 0.5 - time * 6) * 0.5) + 0.5
 
         switch mode {
-        case .recording:
-            return BarStyle(amplitude: source,
-                            color: Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1))
         case .transforming:
             let drift = (t + time * 0.15).truncatingRemainder(dividingBy: 1)
             return BarStyle(amplitude: source * (0.35 + 0.65 * shimmer),
                             color: Self.rainbowColor(drift, lightness: 0.60 + shimmer * 0.08, saturation: 1, alpha: 1))
-        case .ready:
+        default: // .recording
             return BarStyle(amplitude: source,
-                            color: Self.rainbowColor(t, lightness: 0.52, saturation: 0.70, alpha: 0.50))
-        case .playing:
-            let color = t <= progress
-                ? Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1)
-                : .white.opacity(0.16)
-            return BarStyle(amplitude: source, color: color)
+                            color: Self.rainbowColor(t, lightness: 0.62, saturation: 1, alpha: 1))
         }
     }
 
@@ -1142,6 +1165,14 @@ struct NeonWaveformView: View {
     static func rainbowColor(_ t: Double, lightness: Double, saturation: Double, alpha: Double) -> Color {
         let hue = (140 + t * 280).truncatingRemainder(dividingBy: 360) / 360
         return Color(hue: hue, saturation: saturation, brightness: lightness, opacity: alpha)
+    }
+}
+
+private extension Color {
+    /// Rebuild a SwiftUI color from the shared layout's raw RGBA so the preview
+    /// matches the mp4 renderer byte-for-byte (device RGB ≈ sRGB on iOS).
+    init(_ rgba: WaveformRGBA) {
+        self.init(.sRGB, red: rgba.red, green: rgba.green, blue: rgba.blue, opacity: rgba.alpha)
     }
 }
 
