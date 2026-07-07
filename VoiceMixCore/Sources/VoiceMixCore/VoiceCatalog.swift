@@ -64,11 +64,11 @@ struct VoicePersona: Identifiable, Equatable {
 
     // `voiceId` + `engine` are the values the backend accepts on the wire — the
     // display `name` is cosmetic and can differ from the voiceId.
-    //   Real fine-tuned voices:   trump, dwarkesh, elon           -> .modal
+    //   Real fine-tuned voices:   el-prez, dwarkesh, tech-magnate  -> .modal
     //   All voiceIds above exist on the server /voices, so the DEBUG preflight passes.
     static let all: [VoicePersona] = [
-        VoicePersona(id: "trump",
-                     voiceId: "trump",
+        VoicePersona(id: "el-prez",
+                     voiceId: "el-prez",
                      engine: .modal,
                      name: "El Prez",
                      tag: "Brash · bold · unmistakable",
@@ -87,8 +87,8 @@ struct VoicePersona: Identifiable, Equatable {
                      placeholderSymbol: "mic.fill",
                      hex1: 0x2193B0,
                      hex2: 0x6DD5ED),
-        VoicePersona(id: "elon",
-                     voiceId: "elon",
+        VoicePersona(id: "tech-magnate",
+                     voiceId: "tech-magnate",
                      engine: .modal,
                      name: "Tech Magnate",
                      tag: "Dry · halting · visionary",
