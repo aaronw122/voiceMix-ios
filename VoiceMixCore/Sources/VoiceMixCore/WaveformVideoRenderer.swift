@@ -1,5 +1,6 @@
 import Foundation
 import AVFoundation
+import VideoToolbox
 import UIKit
 import os
 
@@ -26,15 +27,36 @@ struct WaveformVideoRenderer {
         case appendFailed(String)
     }
 
-    /// Video output dimensions and timing. The frame is static, so a low fps
-    /// keeps the video tiny.
+    /// Video output dimensions and timing.
     private enum VideoSpec {
         // Wide-and-short so Messages renders a slim, voice-message-style pill
         // (the bubble takes the video's aspect ratio). Lower the height for a
         // thinner pill; keep both dimensions even for H.264.
         static let frameSize = CGSize(width: 600, height: 140)
-        static let framesPerSecond: Int32 = 6
+        // Animated progress needs distinct frames; 12fps is smooth enough while
+        // keeping the encode light inside the extension's memory budget.
+        static let framesPerSecond: Int32 = 12
         static let minimumDurationSeconds = 0.1
+        // Hard cap on rendered frames so long clips never explode the frame
+        // count (and memory); above this the effective fps drops.
+        static let maxFrames = 240
+
+        // EXPERIMENT: transparent background via HEVC-with-alpha so the pill
+        // blends into the message bubble instead of sitting on a dark rectangle.
+        // Flip to false to fall back to the H.264 dark pill. (Whether Messages
+        // renders inline video alpha as transparent is unverified — validate on
+        // a physical device.)
+        static let transparentBackground = true
+        static var fileType: AVFileType { transparentBackground ? .mov : .mp4 }
+        static var fileExtension: String { transparentBackground ? "mov" : "mp4" }
+    }
+
+    /// What the video track shows: an animated waveform (played bars fill to
+    /// rainbow behind a playhead) or, when no bars can be sampled, a static
+    /// mic-glyph cover repeated for the clip.
+    private enum VideoContent {
+        case animated(bars: [Double])
+        case staticCover(UIImage)
     }
 
     /// Metrics for the slim waveform pill cover.
@@ -45,21 +67,21 @@ struct WaveformVideoRenderer {
         static let micPointSize: CGFloat = 56
     }
 
-    /// Wrap `audioURL` in an `.mp4` with a static branded cover and return the
-    /// new file URL (durable, uniquely named, in caches).
+    /// Wrap `audioURL` in an `.mp4` whose waveform advances in sync with the
+    /// audio, and return the new file URL (durable, uniquely named, in caches).
     func makeVideo(fromAudio audioURL: URL, personaName: String? = nil) async throws -> URL {
         log.info("RENDER: makeVideo entry")
         do {
             let asset = AVURLAsset(url: audioURL)
             let duration = try await loadDuration(asset)
             try Task.checkCancellation()
-            let cover = await makeBestAvailableCover(for: asset,
-                                                     duration: duration,
-                                                     personaName: personaName)
+            // Sample the waveform once here; the animated path reuses these bars
+            // for every frame (no second PCM read).
+            let bars = (try? await waveformBars(from: asset))?.map(Double.init) ?? []
             try Task.checkCancellation()
-            let url = try await renderVideo(audioURL: audioURL,
-                                            duration: duration,
-                                            cover: cover)
+            let content: VideoContent = bars.isEmpty ? .staticCover(makeCoverImage())
+                                                     : .animated(bars: bars)
+            let url = try await renderVideo(audioURL: audioURL, duration: duration, content: content)
             log.info("RENDER: makeVideo exit")
             return url
         } catch {
@@ -76,19 +98,6 @@ struct WaveformVideoRenderer {
         return bars.map(Double.init)
     }
 
-    /// Try to draw a real waveform from PCM samples; fall back to the static
-    /// mic cover if sample reading fails or yields nothing (never blank).
-    private func makeBestAvailableCover(for asset: AVURLAsset,
-                                        duration: CMTime,
-                                        personaName: String?) async -> UIImage {
-        if let bars = try? await waveformBars(from: asset), !bars.isEmpty {
-            return makeCoverImage(centerDraw: { ctx, rect in
-                drawWaveform(bars: bars, in: rect, context: ctx)
-            })
-        }
-        return makeCoverImage()
-    }
-
     // MARK: - Duration
 
     private func loadDuration(_ asset: AVURLAsset) async throws -> CMTime {
@@ -101,9 +110,8 @@ struct WaveformVideoRenderer {
 
     // MARK: - Cover image
 
-    /// Build a slim pill cover: dark background filling the frame with the
-    /// rainbow waveform spanning its width. Falls back to a small centered mic
-    /// glyph when no waveform can be sampled.
+    /// Build the static fallback pill cover: dark background with a centered mic
+    /// glyph, used only when no waveform can be sampled.
     func makeCoverImage(centerDraw: ((CGContext, CGRect) -> Void)? = nil) -> UIImage {
         let renderer = UIGraphicsImageRenderer(size: VideoSpec.frameSize)
         return renderer.image { ctx in
@@ -285,39 +293,15 @@ struct WaveformVideoRenderer {
         return bars.map { $0 / peak }
     }
 
-    /// Draw normalized bars as a centered vertical-bar waveform in `rect`.
-    private func drawWaveform(bars: [CGFloat], in rect: CGRect, context: CGContext) {
-        guard !bars.isEmpty else { return }
-        let spacing: CGFloat = 3
-        let totalSpacing = spacing * CGFloat(bars.count - 1)
-        let barWidth = max((rect.width - totalSpacing) / CGFloat(bars.count), 1)
-        let midY = rect.midY
-        let minBar: CGFloat = 4
-
-        for (barIndex, value) in bars.enumerated() {
-            let position = CGFloat(barIndex) / CGFloat(max(bars.count, 1))
-            let color = Self.rainbowColor(t: position, lightness: 0.62, saturation: 1, alpha: 1)
-            let x = rect.minX + CGFloat(barIndex) * (barWidth + spacing)
-            let height = max(value * rect.height, minBar)
-            let barRect = CGRect(x: x, y: midY - height / 2, width: barWidth, height: height)
-            let path = UIBezierPath(roundedRect: barRect, cornerRadius: barWidth / 2)
-            context.saveGState()
-            context.setShadow(offset: .zero, blur: 10, color: color.withAlphaComponent(0.90).cgColor)
-            color.setFill()
-            path.fill()
-            context.restoreGState()
-        }
-    }
-
     // MARK: - Render + mux
 
     private func renderVideo(audioURL: URL,
                              duration: CMTime,
-                             cover: UIImage) async throws -> URL {
-        let outputURL = uniqueTempURL(suffix: "voiceMix", ext: "mp4")
+                             content: VideoContent) async throws -> URL {
+        let outputURL = uniqueTempURL(suffix: "voiceMix", ext: VideoSpec.fileExtension)
         try? FileManager.default.removeItem(at: outputURL)
         do {
-            try await writeMovie(cover: cover,
+            try await writeMovie(content: content,
                                  audioURL: audioURL,
                                  duration: duration,
                                  to: outputURL)
@@ -337,30 +321,21 @@ struct WaveformVideoRenderer {
         let audioInput: AVAssetWriterInput
     }
 
-    private func writeMovie(cover: UIImage,
+    private func writeMovie(content: VideoContent,
                             audioURL: URL,
                             duration: CMTime,
                             to url: URL) async throws {
         log.info("RENDER: writeMovie entry")
-        guard let cgImage = cover.cgImage else { throw RenderError.pixelBufferFailed }
-
         let pipeline = try await makeMuxPipeline(audioURL: audioURL, to: url)
         let writer = pipeline.writer
-
-        guard let buffer = pixelBuffer(from: cgImage) else {
-            writer.cancelWriting()
-            throw RenderError.pixelBufferFailed
-        }
 
         do {
             // Both inputs must be fed concurrently — feeding the full video
             // track while the audio input sits unfed fills the video input's
             // queue and the muxer deadlocks waiting to interleave audio.
-            async let video: Void = writeVideoTrack(input: pipeline.videoInput,
-                                                    adaptor: pipeline.adaptor,
-                                                    buffer: buffer,
-                                                    duration: duration,
-                                                    writer: writer)
+            async let video: Void = writeVideoTrack(content: content,
+                                                    pipeline: pipeline,
+                                                    duration: duration)
             async let audio: Void = writeAudioTrack(reader: pipeline.audioReader,
                                                     output: pipeline.audioOutput,
                                                     input: pipeline.audioInput,
@@ -379,7 +354,7 @@ struct WaveformVideoRenderer {
     }
 
     private func makeMuxPipeline(audioURL: URL, to url: URL) async throws -> MuxPipeline {
-        let writer = try AVAssetWriter(outputURL: url, fileType: .mp4)
+        let writer = try AVAssetWriter(outputURL: url, fileType: VideoSpec.fileType)
         let videoInput = makeVideoInput()
         let adaptor = makePixelBufferAdaptor(for: videoInput)
         let audioAsset = AVURLAsset(url: audioURL)
@@ -430,11 +405,20 @@ struct WaveformVideoRenderer {
     }
 
     private func makeVideoInput() -> AVAssetWriterInput {
-        let settings: [String: Any] = [
-            AVVideoCodecKey: AVVideoCodecType.h264,
+        var settings: [String: Any] = [
             AVVideoWidthKey: Int(VideoSpec.frameSize.width),
             AVVideoHeightKey: Int(VideoSpec.frameSize.height),
         ]
+        if VideoSpec.transparentBackground {
+            // HEVC-with-alpha carries a real alpha channel (H.264 cannot).
+            settings[AVVideoCodecKey] = AVVideoCodecType.hevcWithAlpha
+            settings[AVVideoCompressionPropertiesKey] = [
+                kVTCompressionPropertyKey_AlphaChannelMode as String:
+                    kVTAlphaChannelMode_PremultipliedAlpha as String,
+            ]
+        } else {
+            settings[AVVideoCodecKey] = AVVideoCodecType.h264
+        }
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
         return input
@@ -462,24 +446,69 @@ struct WaveformVideoRenderer {
         return input
     }
 
-    private func writeVideoTrack(input: AVAssetWriterInput,
-                                 adaptor: AVAssetWriterInputPixelBufferAdaptor,
-                                 buffer: CVPixelBuffer,
-                                 duration: CMTime,
-                                 writer: AVAssetWriter) async throws {
-        log.info("RENDER: writeVideoTrack entry")
+    private func writeVideoTrack(content: VideoContent,
+                                 pipeline: MuxPipeline,
+                                 duration: CMTime) async throws {
+        switch content {
+        case .animated(let bars):
+            try await writeAnimatedVideoTrack(bars: bars, pipeline: pipeline, duration: duration)
+        case .staticCover(let image):
+            try await writeStaticVideoTrack(image: image, pipeline: pipeline, duration: duration)
+        }
+    }
+
+    /// Fallback path: one repeated cover frame for the whole clip.
+    private func writeStaticVideoTrack(image: UIImage,
+                                       pipeline: MuxPipeline,
+                                       duration: CMTime) async throws {
+        log.info("RENDER: writeStaticVideoTrack entry")
+        let writer = pipeline.writer
+        guard let cgImage = image.cgImage, let buffer = pixelBuffer(from: cgImage) else {
+            writer.cancelWriting()
+            throw RenderError.pixelBufferFailed
+        }
         for presentationTime in staticFrameTimes(covering: duration) {
             try Task.checkCancellation()
-            try await waitForInputReady(input, writer: writer)
-            guard adaptor.append(buffer, withPresentationTime: presentationTime) else {
+            try await waitForInputReady(pipeline.videoInput, writer: writer)
+            guard pipeline.adaptor.append(buffer, withPresentationTime: presentationTime) else {
                 let message = writer.error?.localizedDescription ?? "video append failed"
                 log.error("RENDER: video append failed \(message)")
                 writer.cancelWriting()
                 throw RenderError.appendFailed(message)
             }
         }
-        input.markAsFinished()
-        log.info("RENDER: writeVideoTrack exit")
+        pipeline.videoInput.markAsFinished()
+        log.info("RENDER: writeStaticVideoTrack exit")
+    }
+
+    /// Animated path: a distinct frame per presentation time, each drawn with
+    /// the waveform filled to that frame's progress. Each frame uses a fresh
+    /// pooled buffer inside an autoreleasepool to stay within the extension's
+    /// memory budget.
+    private func writeAnimatedVideoTrack(bars: [Double],
+                                         pipeline: MuxPipeline,
+                                         duration: CMTime) async throws {
+        log.info("RENDER: writeAnimatedVideoTrack entry")
+        let writer = pipeline.writer
+        for frame in animatedFrameTimes(covering: duration) {
+            try Task.checkCancellation()
+            try await waitForInputReady(pipeline.videoInput, writer: writer)
+            try autoreleasepool {
+                guard let buffer = newPixelBuffer(from: pipeline.adaptor) else {
+                    writer.cancelWriting()
+                    throw RenderError.pixelBufferFailed
+                }
+                drawAnimatedFrame(bars: bars, progress: frame.progress, into: buffer)
+                guard pipeline.adaptor.append(buffer, withPresentationTime: frame.time) else {
+                    let message = writer.error?.localizedDescription ?? "video append failed"
+                    log.error("RENDER: video append failed \(message)")
+                    writer.cancelWriting()
+                    throw RenderError.appendFailed(message)
+                }
+            }
+        }
+        pipeline.videoInput.markAsFinished()
+        log.info("RENDER: writeAnimatedVideoTrack exit")
     }
 
     private func writeAudioTrack(reader: AVAssetReader,
@@ -533,6 +562,101 @@ struct WaveformVideoRenderer {
         return (0..<frameCount).map { CMTime(value: CMTimeValue($0), timescale: fps) }
     }
 
+    /// Presentation times + progress for the animated frames. Times span
+    /// `[0, duration)` (no sample on the `endSession` boundary); the final frame
+    /// is forced to progress 1.0 and held through `endSession` so the playhead
+    /// lands at the far edge exactly as the audio ends. Frame count is capped so
+    /// long clips can't explode memory.
+    private func animatedFrameTimes(covering duration: CMTime) -> [(time: CMTime, progress: Double)] {
+        let durationSeconds = max(CMTimeGetSeconds(duration), VideoSpec.minimumDurationSeconds)
+        let rawCount = max(Int(durationSeconds * Double(VideoSpec.framesPerSecond)), 2)
+        let frameCount = min(rawCount, VideoSpec.maxFrames)
+        if rawCount > VideoSpec.maxFrames {
+            log.info("RENDER: frame cap hit (\(rawCount) → \(frameCount) for \(durationSeconds)s)")
+        }
+        return (0..<frameCount).map { index in
+            let fraction = Double(index) / Double(frameCount)
+            let time = CMTime(seconds: fraction * durationSeconds, preferredTimescale: 600)
+            let progress = index == frameCount - 1 ? 1.0 : fraction
+            return (time, progress)
+        }
+    }
+
+    /// Draw one animated waveform frame directly into a pooled pixel buffer.
+    private func drawAnimatedFrame(bars: [Double], progress: Double, into buffer: CVPixelBuffer) {
+        let width = Int(VideoSpec.frameSize.width)
+        let height = Int(VideoSpec.frameSize.height)
+
+        CVPixelBufferLockBaseAddress(buffer, [])
+        defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
+
+        // Transparent frames need a real alpha channel (premultiplied); the
+        // opaque pill path skips alpha as before.
+        let alphaInfo = VideoSpec.transparentBackground
+            ? CGImageAlphaInfo.premultipliedFirst.rawValue
+            : CGImageAlphaInfo.noneSkipFirst.rawValue
+        guard let cg = CGContext(
+            data: CVPixelBufferGetBaseAddress(buffer),
+            width: width,
+            height: height,
+            bitsPerComponent: 8,
+            bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: alphaInfo
+        ) else { return }
+
+        // Flip to a top-left origin so the shared (top-left) layout draws upright.
+        cg.translateBy(x: 0, y: CGFloat(height))
+        cg.scaleBy(x: 1, y: -1)
+
+        // Full repaint every frame — pooled buffers recycle stale pixels. When
+        // transparent, clear to nothing so only the bars/playhead show.
+        let bounds = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
+        if VideoSpec.transparentBackground {
+            cg.clear(bounds)
+        } else {
+            drawCoverBackground(in: bounds, context: cg)
+        }
+
+        let frame = WaveformLayout.frame(bars: bars, progress: progress, size: VideoSpec.frameSize)
+        for bar in frame.bars {
+            cg.addPath(CGPath(roundedRect: bar.rect,
+                              cornerWidth: frame.cornerRadius,
+                              cornerHeight: frame.cornerRadius,
+                              transform: nil))
+            cg.setFillColor(bar.color.cgColor)
+            cg.fillPath()
+        }
+        if let playheadX = frame.playheadX {
+            let rule = CGRect(x: playheadX - 1, y: 0, width: 2, height: CGFloat(height))
+            cg.addPath(CGPath(roundedRect: rule, cornerWidth: 1, cornerHeight: 1, transform: nil))
+            cg.setFillColor(frame.playhead.cgColor)
+            cg.fillPath()
+        }
+    }
+
+    /// A fresh pixel buffer from the adaptor's pool (falling back to a direct
+    /// allocation if the pool is unavailable).
+    private func newPixelBuffer(from adaptor: AVAssetWriterInputPixelBufferAdaptor) -> CVPixelBuffer? {
+        var buffer: CVPixelBuffer?
+        if let pool = adaptor.pixelBufferPool {
+            CVPixelBufferPoolCreatePixelBuffer(kCFAllocatorDefault, pool, &buffer)
+        }
+        if buffer == nil {
+            let attrs: [String: Any] = [
+                kCVPixelBufferCGImageCompatibilityKey as String: true,
+                kCVPixelBufferCGBitmapContextCompatibilityKey as String: true,
+            ]
+            CVPixelBufferCreate(kCFAllocatorDefault,
+                                Int(VideoSpec.frameSize.width),
+                                Int(VideoSpec.frameSize.height),
+                                kCVPixelFormatType_32ARGB,
+                                attrs as CFDictionary,
+                                &buffer)
+        }
+        return buffer
+    }
+
     // MARK: - Pixel buffer
 
     private func pixelBuffer(from image: CGImage) -> CVPixelBuffer? {
@@ -574,16 +698,5 @@ struct WaveformVideoRenderer {
         let dir = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first
             ?? FileManager.default.temporaryDirectory
         return dir.appendingPathComponent("\(suffix)-\(UUID().uuidString).\(ext)")
-    }
-
-    private static func rainbowColor(t: CGFloat,
-                                     lightness: CGFloat,
-                                     saturation: CGFloat,
-                                     alpha: CGFloat) -> UIColor {
-        let hueDegrees = (140 + t * 280).truncatingRemainder(dividingBy: 360)
-        return UIColor(hue: hueDegrees / 360,
-                       saturation: saturation,
-                       brightness: lightness,
-                       alpha: alpha)
     }
 }

@@ -1,8 +1,9 @@
 ---
 title: "Native-Style Animated Waveform Playback"
 author: "human:aaron"
-version: 1
+version: 2
 created: 2026-06-16
+note: "v2 — color model corrected: existing rainbow kept for played bars; unplayed bars faded (no new brand accent color)."
 ---
 
 # Native-Style Animated Waveform Playback
@@ -15,13 +16,19 @@ progress indicator that moves synchronously across it as the clip plays.
 - Bake **animated playback progress** into the generated `.mp4` so that, on play,
   the waveform visibly advances in sync with the audio. Because frames are pinned
   to presentation times, sync is automatic on playback (no runtime player logic).
-- Progress visualization = **fill + leading playhead line**: unplayed bars sit in a
-  muted color, each bar "activates" to the accent color as the playhead reaches it,
-  and a thin vertical playhead line leads the fill edge.
+- Progress visualization = **fill + leading playhead line**: unplayed bars sit
+  faded/dimmed, each bar "activates" to its existing rainbow color as the playhead
+  reaches it, and a thin vertical playhead line leads the fill edge.
 - Keep the **audio-shaped waveform** that already exists (`waveformBars` → 54
   normalized amplitude bars), but render it in **native bar proportions** (centered,
-  symmetric, rounded caps) with a single tasteful **brand accent color** (Claude to
-  propose; user confirms).
+  symmetric, rounded caps). Keep the **existing per-bar rainbow** for played bars;
+  unplayed bars are **faded/dimmed**; the **resting (pre-play) state shows all bars
+  faded** (so pressing play only lights bars up — no jarring recolor).
+- **Borrow the existing preview fill logic.** `NeonWaveformView.playing`
+  (`VoiceTransformView.swift`) already colors bars where `t <= progress` and dims the
+  rest — this IS the desired effect. Factor the bar-drawing into **one shared draw
+  routine** (bars + progress → geometry/colors) used by BOTH the SwiftUI preview and
+  the Core Graphics mp4 renderer, so they can never visually drift.
 - Keep the **dark pill background** (current dark gradient) — intentional, theme-safe,
   hides the fact that we can't match the recipient's bubble color.
 - Update the **in-extension live preview** (`displayBars` consumer in
@@ -31,7 +38,7 @@ progress indicator that moves synchronously across it as the clip plays.
 ## DON'T
 - Don't touch the backend convert/impersonate flow or `ConvertService` — this is
   purely the presentation/mux layer (`WaveformVideoRenderer`) + the preview view.
-- Don't keep the rainbow-on-dark waveform aesthetic.
+- Don't introduce a new brand/accent color — reuse the existing rainbow for played bars.
 - Don't attempt a transparent video or to match the recipient's bubble color — not
   possible for a baked mp4; the dark pill is the deliberate compromise.
 - Don't blow the iMessage extension's tight memory budget. The mp4 encode is the
@@ -57,8 +64,8 @@ progress indicator that moves synchronously across it as the clip plays.
 ## ENSURE
 - On a physical iPhone, sending a converted clip produces an mp4 whose waveform
   **playhead advances in sync with the audio** from start to finish.
-- Played bars render in the accent color; unplayed bars render muted; a leading
-  playhead line tracks the fill edge.
+- Played bars render in the existing rainbow color; unplayed bars render faded/dimmed;
+  resting state shows all bars faded; a leading playhead line tracks the fill edge.
 - The waveform shape still reflects the actual audio amplitudes (loud sections =
   taller bars).
 - The encode **completes reliably on-device** without terminating the extension,
@@ -77,6 +84,5 @@ progress indicator that moves synchronously across it as the clip plays.
   frame-count cap.
 - [autonomous] Native bar metrics (count, spacing, corner radius, min height) and
   muted/active color treatment.
-- [autonomous] Proposing the brand accent color.
-- [ask] Final sign-off on the proposed accent color before it ships.
+- [autonomous] The faded/dimmed treatment for unplayed + resting bars.
 - [ask] Final on-device visual confirmation that it reads as "native enough."
