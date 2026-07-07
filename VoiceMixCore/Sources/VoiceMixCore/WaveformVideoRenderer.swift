@@ -41,14 +41,11 @@ struct WaveformVideoRenderer {
         // count (and memory); above this the effective fps drops.
         static let maxFrames = 240
 
-        // EXPERIMENT: transparent background via HEVC-with-alpha so the pill
-        // blends into the message bubble instead of sitting on a dark rectangle.
-        // Flip to false to fall back to the H.264 dark pill. (Whether Messages
-        // renders inline video alpha as transparent is unverified — validate on
-        // a physical device.)
-        static let transparentBackground = true
-        static var fileType: AVFileType { transparentBackground ? .mov : .mp4 }
-        static var fileExtension: String { transparentBackground ? "mov" : "mp4" }
+        // Transparent background via HEVC-with-alpha so the pill blends into the
+        // message bubble instead of sitting on a dark rectangle. Alpha video
+        // needs the QuickTime (.mov) container.
+        static let fileType: AVFileType = .mov
+        static let fileExtension = "mov"
     }
 
     /// What the video track shows: an animated waveform (played bars fill to
@@ -409,16 +406,13 @@ struct WaveformVideoRenderer {
             AVVideoWidthKey: Int(VideoSpec.frameSize.width),
             AVVideoHeightKey: Int(VideoSpec.frameSize.height),
         ]
-        if VideoSpec.transparentBackground {
-            // HEVC-with-alpha carries a real alpha channel (H.264 cannot).
-            settings[AVVideoCodecKey] = AVVideoCodecType.hevcWithAlpha
-            settings[AVVideoCompressionPropertiesKey] = [
-                kVTCompressionPropertyKey_AlphaChannelMode as String:
-                    kVTAlphaChannelMode_PremultipliedAlpha as String,
-            ]
-        } else {
-            settings[AVVideoCodecKey] = AVVideoCodecType.h264
-        }
+        // HEVC-with-alpha carries a real alpha channel (H.264 cannot), so the
+        // transparent frames blend into the message bubble.
+        settings[AVVideoCodecKey] = AVVideoCodecType.hevcWithAlpha
+        settings[AVVideoCompressionPropertiesKey] = [
+            kVTCompressionPropertyKey_AlphaChannelMode as String:
+                kVTAlphaChannelMode_PremultipliedAlpha as String,
+        ]
         let input = AVAssetWriterInput(mediaType: .video, outputSettings: settings)
         input.expectsMediaDataInRealTime = false
         return input
@@ -590,11 +584,7 @@ struct WaveformVideoRenderer {
         CVPixelBufferLockBaseAddress(buffer, [])
         defer { CVPixelBufferUnlockBaseAddress(buffer, []) }
 
-        // Transparent frames need a real alpha channel (premultiplied); the
-        // opaque pill path skips alpha as before.
-        let alphaInfo = VideoSpec.transparentBackground
-            ? CGImageAlphaInfo.premultipliedFirst.rawValue
-            : CGImageAlphaInfo.noneSkipFirst.rawValue
+        // Premultiplied alpha so the cleared background stays transparent.
         guard let cg = CGContext(
             data: CVPixelBufferGetBaseAddress(buffer),
             width: width,
@@ -602,21 +592,17 @@ struct WaveformVideoRenderer {
             bitsPerComponent: 8,
             bytesPerRow: CVPixelBufferGetBytesPerRow(buffer),
             space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: alphaInfo
+            bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue
         ) else { return }
 
         // Flip to a top-left origin so the shared (top-left) layout draws upright.
         cg.translateBy(x: 0, y: CGFloat(height))
         cg.scaleBy(x: 1, y: -1)
 
-        // Full repaint every frame — pooled buffers recycle stale pixels. When
-        // transparent, clear to nothing so only the bars/playhead show.
+        // Clear to transparent, then draw only the bars/playhead. Pooled buffers
+        // recycle stale pixels, so the full clear every frame is required.
         let bounds = CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height))
-        if VideoSpec.transparentBackground {
-            cg.clear(bounds)
-        } else {
-            drawCoverBackground(in: bounds, context: cg)
-        }
+        cg.clear(bounds)
 
         let frame = WaveformLayout.frame(bars: bars, progress: progress, size: VideoSpec.frameSize)
         for bar in frame.bars {
