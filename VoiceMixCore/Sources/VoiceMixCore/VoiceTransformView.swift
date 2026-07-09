@@ -280,6 +280,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.statusLine = "Recording failed"
                 return
             }
+            // Abandoned during the tail window (Back / collapse / superseded stop).
+            guard self.isRecording else { return }
             self.startConversion(from: recordedURL)
         }
     }
