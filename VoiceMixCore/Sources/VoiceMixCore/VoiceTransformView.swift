@@ -96,7 +96,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     /// deactivate the session under an active recording — finalize the take instead.
     public func handleResignActivePreservingConversion() {
         if isRecording {
-            stopAndConvert()
+            stopAndConvert(tail: false)  // finalize now — no time for a tail buffer before suspension
         } else if isPlaying {
             stopPlayback()
         }
@@ -250,20 +250,27 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func stopAndConvert() {
+    /// `tail`: keep the mic open ~0.4s after stop so the final word isn't clipped by AAC
+    /// finalization (see `AudioRecorder.stopRecording(tail:)`). The deliberate stop-button
+    /// path uses the tail; the resign-active path passes `false` to finalize immediately
+    /// before the app is suspended.
+    private func stopAndConvert(tail: Bool = true) {
         // Read the wall-clock backstop before stopping clears the start time:
         // if the run-loop cap timer fired late (e.g. extension suspended), the
         // clip may have run past the cap and is enforced downstream by size.
         if recorder.hasExceededMaxDuration {
             log.info("REC: stop with clip past max duration (timer delivered late)")
         }
-        guard let recordedURL = recorder.stopRecording() else {
-            stopRecordingTimers()
-            isRecording = false
-            statusLine = "Recording failed"
-            return
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let recordedURL = await self.recorder.stopRecording(tail: tail) else {
+                self.stopRecordingTimers()
+                self.isRecording = false
+                self.statusLine = "Recording failed"
+                return
+            }
+            self.startConversion(from: recordedURL)
         }
-        startConversion(from: recordedURL)
     }
 
     private func recordingReachedMaxDuration(_ recordedURL: URL?) {
@@ -406,19 +413,34 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     private func prepareClip(from recordedURL: URL) async throws -> PreparedClip {
+        let t0 = Date()
         let response = try await service.convert(audioURL: recordedURL,
                                                  voiceId: selectedPersona.voiceId,
                                                  engine: selectedPersona.engine)
+        let tConvert = Date()
         try Task.checkCancellation()
         guard let audioUrl = URL(string: response.audioUrl) else {
             throw ConvertServiceError.invalidAudioURL
         }
         let convertedAudioURL = try await service.fetchAudio(audioUrl)
+        let tFetch = Date()
         try Task.checkCancellation()
         let renderer = WaveformVideoRenderer()
         await updatePreviewWaveform(using: renderer, audioURL: convertedAudioURL)
+        let tWave = Date()
         let videoURL = try await renderer.makeVideo(fromAudio: convertedAudioURL,
                                                     personaName: selectedPersona.name)
+        let tVideo = Date()
+
+        let ms = { (a: Date, b: Date) in Int(b.timeIntervalSince(a) * 1000) }
+        log.info("""
+        TIMING engine=\(self.selectedPersona.engine.rawValue, privacy: .public) \
+        convert=\(ms(t0, tConvert), privacy: .public)ms \
+        fetch=\(ms(tConvert, tFetch), privacy: .public)ms \
+        waveform=\(ms(tFetch, tWave), privacy: .public)ms \
+        mp4=\(ms(tWave, tVideo), privacy: .public)ms \
+        total=\(ms(t0, tVideo), privacy: .public)ms
+        """)
         return PreparedClip(audioURL: convertedAudioURL, videoURL: videoURL)
     }
 

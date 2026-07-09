@@ -47,6 +47,25 @@ public final class AudioRecorder: NSObject {
         scheduleMaxDurationTimer()
     }
 
+    /// Trailing capture window held open after the user taps stop, before the AAC file is
+    /// finalized. AAC encodes in ~23ms frames and finalizes on `stop()`; stopping the instant
+    /// the user finishes speaking intermittently drops the final frame, so the last word goes
+    /// missing from the upload (observed with trailing words like "…Elon" — the transcript came
+    /// back without them). Keeping the mic open briefly pushes the last word clear of the end so
+    /// any dropped final frame is trailing silence, not speech.
+    static let stopTailBuffer: TimeInterval = 0.4
+
+    /// Stop after `stopTailBuffer`, keeping the mic open so the final word isn't clipped by AAC
+    /// finalization. Pass `tail: false` for an immediate stop when there's no time to wait (e.g.
+    /// the app is resigning active and must finalize the file before suspension).
+    @discardableResult
+    func stopRecording(tail: Bool) async -> URL? {
+        if tail, isRecording {
+            try? await Task.sleep(nanoseconds: UInt64(Self.stopTailBuffer * 1_000_000_000))
+        }
+        return stopRecording()
+    }
+
     /// Stops recording and returns the finished file URL.
     @discardableResult
     func stopRecording() -> URL? {
