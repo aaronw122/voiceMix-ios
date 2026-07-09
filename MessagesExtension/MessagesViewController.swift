@@ -59,6 +59,11 @@ final class MessagesViewController: MSMessagesAppViewController {
         requestExpandedPresentation(reason: "willBecomeActive")
     }
 
+    override func didBecomeActive(with conversation: MSConversation) {
+        super.didBecomeActive(with: conversation)
+        viewModel.handleDidBecomeActive()
+    }
+
     override func didResignActive(with conversation: MSConversation) {
         super.didResignActive(with: conversation)
         viewModel.handleResignActivePreservingConversion()

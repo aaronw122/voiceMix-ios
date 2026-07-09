@@ -44,6 +44,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     /// Last successful recording, retained only after a transient conversion
     /// failure so the user can retry without re-recording.
     private var lastRecordedURL: URL?
+    /// Set when background expiry cancelled a conversion; the next activation retries it.
+    private var resumeOnActivate = false
     private var statusIndex = 0
 
     private let transformStatuses = [
@@ -90,6 +92,15 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         case .persona, .record:
             goBack()
         }
+    }
+
+    /// Auto-resume a conversion that background expiry cancelled while the user was away.
+    public func handleDidBecomeActive() {
+        guard resumeOnActivate else { return }
+        resumeOnActivate = false
+        guard step == .record, let retryURL = lastRecordedURL else { return }
+        lastRecordedURL = nil
+        startConversion(from: retryURL)
     }
 
     /// On resign (dim/lock/app-switch) never cancel an in-flight conversion. Don't
@@ -292,6 +303,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private func startConversion(from recordedURL: URL) {
         stopRecordingTimers()
         isRecording = false
+        resumeOnActivate = false
 
         // Fail fast on an oversized take before the upload + heavy mp4 encode.
         if let size = try? FileManager.default.attributesOfItem(atPath: recordedURL.path)[.size] as? Int,
@@ -319,7 +331,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.finishConversion(with: clip)
             } catch is CancellationError {
                 guard self.conversionToken == token else { return }
-                self.handleConversionCancellation()
+                self.handleConversionCancellation(recordedURL: recordedURL)
             } catch {
                 guard self.conversionToken == token else { return }
                 self.log.error("CONVERT: failed \(String(describing: error))")
@@ -368,9 +380,15 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         conversionToken = nil
     }
 
-    private func handleConversionCancellation() {
+    /// Reached only when background expiry cancels an in-flight conversion —
+    /// voluntary cancels invalidate the token first. Keep the take so the next
+    /// activation (or a tap) retries it instead of dead-ending in `.transforming`.
+    private func handleConversionCancellation(recordedURL: URL) {
         stopStatusTimer()
-        statusLine = "Tap to record"
+        statusLine = "Interrupted — tap to retry"
+        lastRecordedURL = recordedURL
+        resumeOnActivate = true
+        step = .record
         conversionTask = nil
         conversionToken = nil
     }
@@ -457,6 +475,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         // Invalidate the identity so the cancelled task (and its background
         // waiter) can't mutate state for this superseded conversion.
         conversionToken = nil
+        resumeOnActivate = false
         stopStatusTimer()
     }
 
