@@ -79,11 +79,12 @@ public struct WaveformPalette {
         return WaveformRGBA(hue: hueDegrees / 360, saturation: 1, brightness: 0.62, alpha: 1)
     }
 
-    /// White unplayed bars (opaque so they read crisply over the transparent
-    /// video's message bubble), bright white playhead.
+    /// Mid-gray unplayed bars: the baked video can't adapt to light/dark, so
+    /// pick one opaque tone that reads over both white and black transcript
+    /// backgrounds (pure white vanished in light-mode Messages).
     public static let standard = WaveformPalette(
-        faded: WaveformRGBA(red: 1, green: 1, blue: 1, alpha: 1),
-        playhead: WaveformRGBA(red: 1, green: 1, blue: 1, alpha: 0.92)
+        faded: WaveformRGBA(red: 0.52, green: 0.52, blue: 0.52, alpha: 1),
+        playhead: WaveformRGBA(red: 0.52, green: 0.52, blue: 0.52, alpha: 0.92)
     )
 }
 
