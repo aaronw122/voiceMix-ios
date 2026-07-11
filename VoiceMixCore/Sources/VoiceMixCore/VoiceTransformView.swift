@@ -44,6 +44,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     /// Last successful recording, retained only after a transient conversion
     /// failure so the user can retry without re-recording.
     private var lastRecordedURL: URL?
+    /// Set when background expiry cancelled a conversion; the next activation retries it.
+    private var resumeOnActivate = false
     private var statusIndex = 0
 
     private let transformStatuses = [
@@ -92,11 +94,20 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         }
     }
 
+    /// Auto-resume a conversion that background expiry cancelled while the user was away.
+    public func handleDidBecomeActive() {
+        guard resumeOnActivate else { return }
+        resumeOnActivate = false
+        guard step == .record, let retryURL = lastRecordedURL else { return }
+        lastRecordedURL = nil
+        startConversion(from: retryURL)
+    }
+
     /// On resign (dim/lock/app-switch) never cancel an in-flight conversion. Don't
     /// deactivate the session under an active recording — finalize the take instead.
     public func handleResignActivePreservingConversion() {
         if isRecording {
-            stopAndConvert()
+            stopAndConvert(tail: false)  // finalize now — no time for a tail buffer before suspension
         } else if isPlaying {
             stopPlayback()
         }
@@ -250,20 +261,29 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         }
     }
 
-    private func stopAndConvert() {
+    /// `tail`: keep the mic open ~0.4s after stop so the final word isn't clipped by AAC
+    /// finalization (see `AudioRecorder.stopRecording(tail:)`). The deliberate stop-button
+    /// path uses the tail; the resign-active path passes `false` to finalize immediately
+    /// before the app is suspended.
+    private func stopAndConvert(tail: Bool = true) {
         // Read the wall-clock backstop before stopping clears the start time:
         // if the run-loop cap timer fired late (e.g. extension suspended), the
         // clip may have run past the cap and is enforced downstream by size.
         if recorder.hasExceededMaxDuration {
             log.info("REC: stop with clip past max duration (timer delivered late)")
         }
-        guard let recordedURL = recorder.stopRecording() else {
-            stopRecordingTimers()
-            isRecording = false
-            statusLine = "Recording failed"
-            return
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            guard let recordedURL = await self.recorder.stopRecording(tail: tail) else {
+                self.stopRecordingTimers()
+                self.isRecording = false
+                self.statusLine = "Recording failed"
+                return
+            }
+            // Abandoned during the tail window (Back / collapse / superseded stop).
+            guard self.isRecording else { return }
+            self.startConversion(from: recordedURL)
         }
-        startConversion(from: recordedURL)
     }
 
     private func recordingReachedMaxDuration(_ recordedURL: URL?) {
@@ -285,6 +305,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private func startConversion(from recordedURL: URL) {
         stopRecordingTimers()
         isRecording = false
+        resumeOnActivate = false
 
         // Fail fast on an oversized take before the upload + heavy mp4 encode.
         if let size = try? FileManager.default.attributesOfItem(atPath: recordedURL.path)[.size] as? Int,
@@ -312,7 +333,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self.finishConversion(with: clip)
             } catch is CancellationError {
                 guard self.conversionToken == token else { return }
-                self.handleConversionCancellation()
+                self.handleConversionCancellation(recordedURL: recordedURL)
             } catch {
                 guard self.conversionToken == token else { return }
                 self.log.error("CONVERT: failed \(String(describing: error))")
@@ -361,9 +382,15 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         conversionToken = nil
     }
 
-    private func handleConversionCancellation() {
+    /// Reached only when background expiry cancels an in-flight conversion —
+    /// voluntary cancels invalidate the token first. Keep the take so the next
+    /// activation (or a tap) retries it instead of dead-ending in `.transforming`.
+    private func handleConversionCancellation(recordedURL: URL) {
         stopStatusTimer()
-        statusLine = "Tap to record"
+        statusLine = "Interrupted — tap to retry"
+        lastRecordedURL = recordedURL
+        resumeOnActivate = true
+        step = .record
         conversionTask = nil
         conversionToken = nil
     }
@@ -406,19 +433,34 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     private func prepareClip(from recordedURL: URL) async throws -> PreparedClip {
+        let t0 = Date()
         let response = try await service.convert(audioURL: recordedURL,
                                                  voiceId: selectedPersona.voiceId,
                                                  engine: selectedPersona.engine)
+        let tConvert = Date()
         try Task.checkCancellation()
         guard let audioUrl = URL(string: response.audioUrl) else {
             throw ConvertServiceError.invalidAudioURL
         }
         let convertedAudioURL = try await service.fetchAudio(audioUrl)
+        let tFetch = Date()
         try Task.checkCancellation()
         let renderer = WaveformVideoRenderer()
         await updatePreviewWaveform(using: renderer, audioURL: convertedAudioURL)
+        let tWave = Date()
         let videoURL = try await renderer.makeVideo(fromAudio: convertedAudioURL,
                                                     personaName: selectedPersona.name)
+        let tVideo = Date()
+
+        let ms = { (a: Date, b: Date) in Int(b.timeIntervalSince(a) * 1000) }
+        log.info("""
+        TIMING engine=\(self.selectedPersona.engine.rawValue, privacy: .public) \
+        convert=\(ms(t0, tConvert), privacy: .public)ms \
+        fetch=\(ms(tConvert, tFetch), privacy: .public)ms \
+        waveform=\(ms(tFetch, tWave), privacy: .public)ms \
+        mp4=\(ms(tWave, tVideo), privacy: .public)ms \
+        total=\(ms(t0, tVideo), privacy: .public)ms
+        """)
         return PreparedClip(audioURL: convertedAudioURL, videoURL: videoURL)
     }
 
@@ -435,6 +477,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         // Invalidate the identity so the cancelled task (and its background
         // waiter) can't mutate state for this superseded conversion.
         conversionToken = nil
+        resumeOnActivate = false
         stopStatusTimer()
     }
 
