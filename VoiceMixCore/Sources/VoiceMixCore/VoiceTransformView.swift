@@ -84,11 +84,14 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     /// Collapsing to compact preserves an in-flight/ready conversion; only idle steps reset.
+    /// `.persona` is already the reset state — collapsing there must NOT route through
+    /// goBack()->cancel()->onDismiss, which fires a redundant requestPresentationStyle(.compact)
+    /// mid-transition and leaves the sheet stuck half-expanded on the next re-open.
     public func handlePresentationCollapse() {
         switch step {
-        case .transforming, .review:
+        case .persona, .transforming, .review:
             return
-        case .persona, .record:
+        case .record:
             goBack()
         }
     }
