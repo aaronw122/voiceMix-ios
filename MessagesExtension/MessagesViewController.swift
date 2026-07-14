@@ -87,6 +87,20 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.didTransition(to: presentationStyle)
         logGeometry("didTransition:\(presentationStyle == .expanded ? "expanded" : presentationStyle == .compact ? "compact" : "transcript")")
+        // The hosting view can freeze the transient full-height layout it first saw;
+        // force it to re-read the settled compact bounds.
+        forceHostRelayout()
+    }
+
+    override func viewDidLayoutSubviews() {
+        super.viewDidLayoutSubviews()
+        logGeometry("viewDidLayoutSubviews")
+    }
+
+    private func forceHostRelayout() {
+        guard let host = hostingController?.view else { return }
+        host.setNeedsLayout()
+        host.layoutIfNeeded()
     }
 
     private func logGeometry(_ label: String) {

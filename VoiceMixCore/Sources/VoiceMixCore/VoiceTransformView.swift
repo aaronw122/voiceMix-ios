@@ -2,6 +2,11 @@ import SwiftUI
 import AVFoundation
 import os
 
+/// Diagnostic logger shared with MessagesViewController's subsystem so GEO + SWIFTUI
+/// lines interleave in one Console filter. Measures the size SwiftUI actually receives
+/// vs. the container size the VC logs — the mismatch pinpoints a stale hosting layout.
+private let vtvLog = Logger(subsystem: "com.aaron.voiceMixer", category: "flow")
+
 @MainActor
 public final class VoiceTransformViewModel: NSObject, ObservableObject {
     enum Step {
@@ -622,6 +627,14 @@ public struct VoiceTransformView: View {
             }
             .padding(.top, 10)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        .background(
+            GeometryReader { geo in
+                Color.clear.task(id: geo.size.height) {
+                    vtvLog.notice("SWIFTUI root size=\(geo.size.width, privacy: .public)x\(geo.size.height, privacy: .public)")
+                }
+            }
+        )
         .preferredColorScheme(.dark)
     }
 
