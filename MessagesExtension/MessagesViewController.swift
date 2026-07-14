@@ -16,6 +16,9 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
 
+        // Unconditional boot marker (default level) — confirms THIS build is the one running.
+        log.notice("BOOT: MessagesViewController viewDidLoad")
+
         #if DEBUG
         // Assert the live switch actually took: a green mock can hide the fact
         // that we never flipped to the real backend.
@@ -91,7 +94,8 @@ final class MessagesViewController: MSMessagesAppViewController {
         let bounds = String(describing: view.bounds)
         let safeAreaInsets = String(describing: view.safeAreaInsets)
         let hostFrame = String(describing: hostingController?.view.frame)
-        log.info("GEO[\(label, privacy: .public)] style=\(styleString, privacy: .public) bounds=\(bounds, privacy: .public) safeArea=\(safeAreaInsets, privacy: .public) hostFrame=\(hostFrame, privacy: .public)")
+        // .notice = default level: always streamed/persisted, no "Include Info Messages" needed.
+        log.notice("GEO[\(label, privacy: .public)] style=\(styleString, privacy: .public) bounds=\(bounds, privacy: .public) safeArea=\(safeAreaInsets, privacy: .public) hostFrame=\(hostFrame, privacy: .public)")
     }
 }
 
