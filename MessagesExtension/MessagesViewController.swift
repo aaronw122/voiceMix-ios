@@ -57,15 +57,14 @@ final class MessagesViewController: MSMessagesAppViewController {
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
         logGeometry("willBecomeActive")
-        requestExpandedPresentation(reason: "willBecomeActive")
+        // Intentionally do NOT auto-expand: the extension opens at the default
+        // compact height (short tray above the keyboard). The user can expand
+        // manually via the grab handle if they want more room.
     }
 
     override func didBecomeActive(with conversation: MSConversation) {
         super.didBecomeActive(with: conversation)
         logGeometry("didBecomeActive")
-        // willBecomeActive's request is unreliable on a second activation in the
-        // same session (sheet lands half-expanded); re-assert once actually active.
-        requestExpandedPresentation(reason: "didBecomeActive")
         viewModel.handleDidBecomeActive()
     }
 
@@ -93,17 +92,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         let safeAreaInsets = String(describing: view.safeAreaInsets)
         let hostFrame = String(describing: hostingController?.view.frame)
         log.info("GEO[\(label, privacy: .public)] style=\(styleString, privacy: .public) bounds=\(bounds, privacy: .public) safeArea=\(safeAreaInsets, privacy: .public) hostFrame=\(hostFrame, privacy: .public)")
-    }
-
-    private func requestExpandedPresentation(reason: String) {
-        guard presentationStyle != .expanded else { return }
-        log.info("REC: requestPresentationStyle(.expanded) reason=\(reason)")
-        // Defer past the in-flight activation/transition — requesting synchronously
-        // here gets coalesced and can leave the sheet stuck half-expanded.
-        DispatchQueue.main.async { [weak self] in
-            guard let self, self.presentationStyle != .expanded else { return }
-            self.requestPresentationStyle(.expanded)
-        }
     }
 }
 
