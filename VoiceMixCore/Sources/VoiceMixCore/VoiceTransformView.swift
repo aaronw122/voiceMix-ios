@@ -50,7 +50,6 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private let transformStatuses = [
         "Uploading your voice…",
-        "Analyzing tone & cadence…",
         "Applying voice model…",
         "Rendering new audio…",
     ]
@@ -875,12 +874,6 @@ public struct VoiceTransformView: View {
 
             recordControl
                 .frame(height: 72)
-
-            Text(model.isRecording ? "Tap to stop" : model.step == .transforming ? "" : "Tap to record")
-                .font(.system(size: 12.5))
-                .foregroundStyle(.white.opacity(0.35))
-                .frame(height: 14)
-                .padding(.top, 2)
                 .padding(.bottom, 6)
         }
     }
