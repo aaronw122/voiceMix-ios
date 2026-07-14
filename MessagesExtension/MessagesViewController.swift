@@ -61,6 +61,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didBecomeActive(with conversation: MSConversation) {
         super.didBecomeActive(with: conversation)
+        // willBecomeActive's request is unreliable on a second activation in the
+        // same session (sheet lands half-expanded); re-assert once actually active.
+        requestExpandedPresentation(reason: "didBecomeActive")
         viewModel.handleDidBecomeActive()
     }
 
@@ -79,7 +82,12 @@ final class MessagesViewController: MSMessagesAppViewController {
     private func requestExpandedPresentation(reason: String) {
         guard presentationStyle != .expanded else { return }
         log.info("REC: requestPresentationStyle(.expanded) reason=\(reason)")
-        requestPresentationStyle(.expanded)
+        // Defer past the in-flight activation/transition — requesting synchronously
+        // here gets coalesced and can leave the sheet stuck half-expanded.
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.presentationStyle != .expanded else { return }
+            self.requestPresentationStyle(.expanded)
+        }
     }
 }
 
