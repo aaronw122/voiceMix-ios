@@ -600,6 +600,7 @@ public struct VoiceTransformView: View {
     @State private var personaScrollPositionID: String?
     @State private var personaAllowsMultiItemScroll = false
     @State private var personaScrollUnlockToken = UUID()
+    @State private var debugRootSize: CGSize = .zero
 
     public init(model: VoiceTransformViewModel) {
         self.model = model
@@ -631,11 +632,23 @@ public struct VoiceTransformView: View {
         .background(
             GeometryReader { geo in
                 Color.clear.task(id: geo.size.height) {
+                    debugRootSize = geo.size
                     let size = "\(Int(geo.size.width))x\(Int(geo.size.height))"
                     vtvLog.notice("SWIFTUI root size=\(size, privacy: .public)")
                 }
             }
         )
+        // TEMP on-screen diagnostic: shows the size SwiftUI actually laid out into.
+        // Lands in the visible black area of the tray. Remove once the sheet is fixed.
+        .overlay(alignment: .bottom) {
+            Text("root \(Int(debugRootSize.width))×\(Int(debugRootSize.height))")
+                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                .foregroundStyle(.yellow)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color.black.opacity(0.65), in: Capsule())
+                .padding(.bottom, 12)
+        }
         .preferredColorScheme(.dark)
     }
 
