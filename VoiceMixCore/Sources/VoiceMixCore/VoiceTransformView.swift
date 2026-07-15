@@ -631,7 +631,8 @@ public struct VoiceTransformView: View {
         .background(
             GeometryReader { geo in
                 Color.clear.task(id: geo.size.height) {
-                    vtvLog.notice("SWIFTUI root size=\(geo.size.width, privacy: .public)x\(geo.size.height, privacy: .public)")
+                    let size = "\(Int(geo.size.width))x\(Int(geo.size.height))"
+                    vtvLog.notice("SWIFTUI root size=\(size, privacy: .public)")
                 }
             }
         )
