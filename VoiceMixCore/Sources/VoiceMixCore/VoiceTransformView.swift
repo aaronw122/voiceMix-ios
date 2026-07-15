@@ -629,6 +629,9 @@ public struct VoiceTransformView: View {
             .padding(.top, 10)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Belt-and-suspenders for iOS 16.0–16.3 (below the safeAreaRegions API): don't let
+        // the phantom keyboard safe-area region shrink the tray's usable height.
+        .ignoresSafeArea(.keyboard)
         .background(
             GeometryReader { geo in
                 Color.clear.task(id: geo.size.height) {

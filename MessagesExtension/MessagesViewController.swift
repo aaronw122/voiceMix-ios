@@ -43,6 +43,14 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         let root = VoiceTransformView(model: viewModel)
         let hosting = UIHostingController(rootView: root)
+        // Compact iMessage trays sit ABOVE the keyboard, but UIHostingController bridges
+        // ALL safe-area regions to SwiftUI by default — including a phantom .keyboard
+        // region. That shrinks the height it offers SwiftUI, so the fixed-height content
+        // falls back to its 286pt minimum (nav bar clipped off the top, black below)
+        // instead of filling the 301pt tray. Bridge only the container's safe area.
+        if #available(iOS 16.4, *) {
+            hosting.safeAreaRegions = .container
+        }
         hosting.view.backgroundColor = .clear
         addChild(hosting)
         view.addSubview(hosting.view)
