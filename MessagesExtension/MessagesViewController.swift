@@ -16,9 +16,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         super.viewDidLoad()
         view.backgroundColor = .black
 
-        // Unconditional boot marker (default level) — confirms THIS build is the one running.
-        log.notice("BOOT: MessagesViewController viewDidLoad")
-
         #if DEBUG
         // Assert the live switch actually took: a green mock can hide the fact
         // that we never flipped to the real backend.
@@ -67,7 +64,6 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
-        logGeometry("willBecomeActive")
         // Intentionally do NOT auto-expand: the extension opens at the default
         // compact height (short tray above the keyboard). The user can expand
         // manually via the grab handle if they want more room.
@@ -75,7 +71,6 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func didBecomeActive(with conversation: MSConversation) {
         super.didBecomeActive(with: conversation)
-        logGeometry("didBecomeActive")
         viewModel.handleDidBecomeActive()
     }
 
@@ -86,38 +81,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
         super.willTransition(to: presentationStyle)
-        logGeometry("willTransition:\(presentationStyle == .expanded ? "expanded" : presentationStyle == .compact ? "compact" : "transcript")")
         if presentationStyle == .compact {
             viewModel.handlePresentationCollapse()
         }
-    }
-
-    override func didTransition(to presentationStyle: MSMessagesAppPresentationStyle) {
-        super.didTransition(to: presentationStyle)
-        logGeometry("didTransition:\(presentationStyle == .expanded ? "expanded" : presentationStyle == .compact ? "compact" : "transcript")")
-        // The hosting view can freeze the transient full-height layout it first saw;
-        // force it to re-read the settled compact bounds.
-        forceHostRelayout()
-    }
-
-    override func viewDidLayoutSubviews() {
-        super.viewDidLayoutSubviews()
-        logGeometry("viewDidLayoutSubviews")
-    }
-
-    private func forceHostRelayout() {
-        guard let host = hostingController?.view else { return }
-        host.setNeedsLayout()
-        host.layoutIfNeeded()
-    }
-
-    private func logGeometry(_ label: String) {
-        let styleString = presentationStyle == .expanded ? "expanded" : presentationStyle == .compact ? "compact" : "transcript"
-        let bounds = String(describing: view.bounds)
-        let safeAreaInsets = String(describing: view.safeAreaInsets)
-        let hostFrame = String(describing: hostingController?.view.frame)
-        // .notice = default level: always streamed/persisted, no "Include Info Messages" needed.
-        log.notice("GEO[\(label, privacy: .public)] style=\(styleString, privacy: .public) bounds=\(bounds, privacy: .public) safeArea=\(safeAreaInsets, privacy: .public) hostFrame=\(hostFrame, privacy: .public)")
     }
 }
 
