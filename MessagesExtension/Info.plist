@@ -5,7 +5,7 @@
 	<key>CFBundleDevelopmentRegion</key>
 	<string>$(DEVELOPMENT_LANGUAGE)</string>
 	<key>CFBundleDisplayName</key>
-	<string>voiceMixer</string>
+	<string>voiceMixy</string>
 	<key>CFBundleExecutable</key>
 	<string>$(EXECUTABLE_NAME)</string>
 	<key>CFBundleIdentifier</key>
@@ -23,7 +23,7 @@
 	<key>API_BASE_URL</key>
 	<string>$(API_BASE_URL)</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>voiceMixer needs the microphone to record the voice clip you want to convert.</string>
+	<string>voiceMixy needs the microphone to record the voice clip you want to convert.</string>
 	<key>NSExtension</key>
 	<dict>
 		<key>NSExtensionMainStoryboard</key>

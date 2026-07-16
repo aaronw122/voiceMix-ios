@@ -40,6 +40,14 @@ final class MessagesViewController: MSMessagesAppViewController {
 
         let root = VoiceTransformView(model: viewModel)
         let hosting = UIHostingController(rootView: root)
+        // Compact iMessage trays sit ABOVE the keyboard, but UIHostingController bridges
+        // ALL safe-area regions to SwiftUI by default — including a phantom .keyboard
+        // region. That shrinks the height it offers SwiftUI, so the fixed-height content
+        // falls back to its 286pt minimum (nav bar clipped off the top, black below)
+        // instead of filling the 301pt tray. Bridge only the container's safe area.
+        if #available(iOS 16.4, *) {
+            hosting.safeAreaRegions = .container
+        }
         hosting.view.backgroundColor = .clear
         addChild(hosting)
         view.addSubview(hosting.view)
@@ -56,7 +64,9 @@ final class MessagesViewController: MSMessagesAppViewController {
 
     override func willBecomeActive(with conversation: MSConversation) {
         super.willBecomeActive(with: conversation)
-        requestExpandedPresentation(reason: "willBecomeActive")
+        // Intentionally do NOT auto-expand: the extension opens at the default
+        // compact height (short tray above the keyboard). The user can expand
+        // manually via the grab handle if they want more room.
     }
 
     override func didBecomeActive(with conversation: MSConversation) {
@@ -74,12 +84,6 @@ final class MessagesViewController: MSMessagesAppViewController {
         if presentationStyle == .compact {
             viewModel.handlePresentationCollapse()
         }
-    }
-
-    private func requestExpandedPresentation(reason: String) {
-        guard presentationStyle != .expanded else { return }
-        log.info("REC: requestPresentationStyle(.expanded) reason=\(reason)")
-        requestPresentationStyle(.expanded)
     }
 }
 

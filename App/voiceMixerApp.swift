@@ -26,8 +26,8 @@ struct OnboardingView: View {
         ),
         OnboardingStep(
             symbol: "square.grid.2x2.fill",
-            title: "Find voiceMix",
-            detail: "Scroll through the apps and tap voiceMix to open it."
+            title: "Find voiceMixy",
+            detail: "Scroll through the apps and tap voiceMixy to open it."
         ),
         OnboardingStep(
             symbol: "person.wave.2.fill",
@@ -48,7 +48,7 @@ struct OnboardingView: View {
                     Image(systemName: "waveform")
                         .font(.system(size: 56, weight: .semibold))
                         .foregroundStyle(.tint)
-                    Text("voiceMix")
+                    Text("voiceMixy")
                         .font(.largeTitle.bold())
                     Text("Transform your voice into someone else's — right inside Messages.")
                         .font(.subheadline)

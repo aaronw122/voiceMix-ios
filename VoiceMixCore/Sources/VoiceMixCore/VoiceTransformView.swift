@@ -50,7 +50,6 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private let transformStatuses = [
         "Uploading your voice…",
-        "Analyzing tone & cadence…",
         "Applying voice model…",
         "Rendering new audio…",
     ]
@@ -85,11 +84,14 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     /// Collapsing to compact preserves an in-flight/ready conversion; only idle steps reset.
+    /// `.persona` is already the reset state — collapsing there must NOT route through
+    /// goBack()->cancel()->onDismiss, which fires a redundant requestPresentationStyle(.compact)
+    /// mid-transition and leaves the sheet stuck half-expanded on the next re-open.
     public func handlePresentationCollapse() {
         switch step {
-        case .transforming, .review:
+        case .persona, .transforming, .review:
             return
-        case .persona, .record:
+        case .record:
             goBack()
         }
     }
@@ -620,6 +622,10 @@ public struct VoiceTransformView: View {
             }
             .padding(.top, 10)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+        // Belt-and-suspenders for iOS 16.0–16.3 (below the safeAreaRegions API): don't let
+        // the phantom keyboard safe-area region shrink the tray's usable height.
+        .ignoresSafeArea(.keyboard)
         .preferredColorScheme(.dark)
     }
 
@@ -875,12 +881,6 @@ public struct VoiceTransformView: View {
 
             recordControl
                 .frame(height: 72)
-
-            Text(model.isRecording ? "Tap to stop" : model.step == .transforming ? "" : "Tap to record")
-                .font(.system(size: 12.5))
-                .foregroundStyle(.white.opacity(0.35))
-                .frame(height: 14)
-                .padding(.top, 2)
                 .padding(.bottom, 6)
         }
     }
