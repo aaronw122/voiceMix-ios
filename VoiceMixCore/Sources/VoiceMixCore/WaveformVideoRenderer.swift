@@ -552,8 +552,14 @@ struct WaveformVideoRenderer {
     private func staticFrameTimes(covering duration: CMTime) -> [CMTime] {
         let fps = VideoSpec.framesPerSecond
         let durationSeconds = max(CMTimeGetSeconds(duration), VideoSpec.minimumDurationSeconds)
-        let frameCount = max(Int(durationSeconds * Double(fps)), 2)
-        return (0..<frameCount).map { CMTime(value: CMTimeValue($0), timescale: fps) }
+        let rawCount = max(Int(durationSeconds * Double(fps)), 2)
+        guard rawCount > VideoSpec.maxFrames else {
+            return (0..<rawCount).map { CMTime(value: CMTimeValue($0), timescale: fps) }
+        }
+        return (0..<VideoSpec.maxFrames).map { index in
+            let fraction = Double(index) / Double(VideoSpec.maxFrames - 1)
+            return CMTime(seconds: fraction * durationSeconds, preferredTimescale: 600)
+        }
     }
 
     /// Presentation times + progress for the animated frames. Times span

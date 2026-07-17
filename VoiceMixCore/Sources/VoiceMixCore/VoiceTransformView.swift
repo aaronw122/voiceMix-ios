@@ -299,8 +299,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     /// Conservative client-side ceiling on the recorded upload, mirroring the
-    /// backend's 10MB convert limit (`LiveConvertService.maxUploadBytes`). At
-    /// 120s the mp4 encode is the app's #1 crash path, so we fail fast here
+    /// backend's 10 MiB convert limit (`LiveConvertService.maxUploadBytes`). At
+    /// 180s the mp4 encode is the app's #1 crash path, so we fail fast here
     /// rather than attempt a doomed upload + encode for an oversized take.
     private static let maxRecordingBytes = 10 * 1024 * 1024
 
@@ -347,7 +347,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         }
         conversionTask = task
         Self.holdBackgroundActivity(for: task, token: token, isCurrent: { [weak self] in
-            await MainActor.run { self?.conversionToken == token }
+            await MainActor.run { [weak self] in self?.conversionToken == token }
         })
     }
 
@@ -371,7 +371,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 _ = await task.value
                 done.signal()
             }
-            _ = done.wait(timeout: .now() + 180)  // failsafe against a hung encode
+            _ = done.wait(timeout: .now() + 300)  // PROVISIONAL — exceeds request timeout plus render.
         }
     }
 
