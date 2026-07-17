@@ -299,10 +299,10 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     /// Conservative client-side ceiling on the recorded upload, mirroring the
-    /// backend's 20 MiB convert limit (`LiveConvertService.maxUploadBytes`). At
+    /// backend's 10 MiB convert limit (`LiveConvertService.maxUploadBytes`). At
     /// 180s the mp4 encode is the app's #1 crash path, so we fail fast here
     /// rather than attempt a doomed upload + encode for an oversized take.
-    private static let maxRecordingBytes = 20 * 1024 * 1024
+    private static let maxRecordingBytes = 10 * 1024 * 1024
 
     private func startConversion(from recordedURL: URL) {
         stopRecordingTimers()

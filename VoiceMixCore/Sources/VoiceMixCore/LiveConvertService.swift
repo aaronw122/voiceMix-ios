@@ -8,9 +8,9 @@ import os
 /// and an `audio` file part; for modal we send EXACTLY those two parts (no
 /// `text` part — the backend rejects sending both audio and text).
 public struct LiveConvertService: ConvertService {
-    /// Mirror of the backend's 20 MiB upload limit. We fail fast with a typed
+    /// Mirror of the backend's 10 MiB upload limit. We fail fast with a typed
     /// error before buffering the file rather than uploading and eating a 413.
-    static let maxUploadBytes = 20 * 1024 * 1024
+    static let maxUploadBytes = 10 * 1024 * 1024
 
     let baseURL: URL
     let session: URLSession
