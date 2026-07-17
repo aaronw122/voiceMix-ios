@@ -10,6 +10,7 @@ let package = Package(
         .library(name: "VoiceMixCore", targets: ["VoiceMixCore"])
     ],
     targets: [
-        .target(name: "VoiceMixCore")
+        .target(name: "VoiceMixCore"),
+        .testTarget(name: "VoiceMixCoreTests", dependencies: ["VoiceMixCore"])
     ]
 )

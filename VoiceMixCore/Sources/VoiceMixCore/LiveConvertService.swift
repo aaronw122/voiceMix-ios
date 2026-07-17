@@ -33,7 +33,7 @@ public struct LiveConvertService: ConvertService {
         self.session = session
     }
 
-    public func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> ConvertResponse {
+    public func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> URL {
         try validateUploadSize(of: audioURL)
 
         let boundary = "Boundary-\(UUID().uuidString)"
@@ -48,7 +48,19 @@ public struct LiveConvertService: ConvertService {
 
         let (data, response) = try await performUpload(request, body: body)
         let payload = try validatedPayload(data, response, engine: engine, voiceId: voiceId)
-        return try JSONDecoder().decode(ConvertResponse.self, from: payload)
+        let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")
+        let mediaType = contentType?
+            .split(separator: ";", maxSplits: 1)
+            .first?
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard mediaType?.caseInsensitiveCompare("audio/mpeg") == .orderedSame else {
+            throw ConvertServiceError.unexpectedContentType(contentType)
+        }
+
+        let destination = FileManager.default.temporaryDirectory
+            .appendingPathComponent("voiceMix-\(UUID().uuidString).mp3")
+        try payload.write(to: destination, options: .atomic)
+        return destination
     }
 
     private func endpoint(for engine: VoiceEngine) -> URL {
@@ -73,6 +85,7 @@ public struct LiveConvertService: ConvertService {
         var request = URLRequest(url: endpoint(for: engine))
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
         return request
     }
 
@@ -100,27 +113,6 @@ public struct LiveConvertService: ConvertService {
             throw ConvertServiceError.httpStatus(http.statusCode, body: bodyText)
         }
         return data
-    }
-
-    public func fetchAudio(_ audioUrl: URL) async throws -> URL {
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await session.data(from: audioUrl)
-        } catch {
-            throw ConvertServiceError.network(underlying: error)
-        }
-        guard let http = response as? HTTPURLResponse else {
-            throw ConvertServiceError.httpStatus(-1, body: nil)
-        }
-        guard (200..<300).contains(http.statusCode) else {
-            throw ConvertServiceError.httpStatus(http.statusCode, body: nil)
-        }
-
-        let destination = FileManager.default.temporaryDirectory
-            .appendingPathComponent("voiceMix-\(UUID().uuidString).mp3")
-        try data.write(to: destination, options: .atomic)
-        return destination
     }
 
     /// Builds a multipart/form-data body with a `voiceId` text field and an

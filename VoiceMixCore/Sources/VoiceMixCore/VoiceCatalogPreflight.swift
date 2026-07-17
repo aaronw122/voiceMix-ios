@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import Foundation
 import os
 
@@ -64,4 +65,5 @@ public enum VoiceCatalogPreflight {
         log.info("PREFLIGHT: catalog matches server /voices")
     }
 }
+#endif
 #endif
