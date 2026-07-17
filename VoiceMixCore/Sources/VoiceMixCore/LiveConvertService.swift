@@ -8,9 +8,9 @@ import os
 /// and an `audio` file part; for modal we send EXACTLY those two parts (no
 /// `text` part — the backend rejects sending both audio and text).
 public struct LiveConvertService: ConvertService {
-    /// Mirror of the backend's 10MB upload limit. We fail fast with a typed
+    /// Mirror of the backend's 20 MiB upload limit. We fail fast with a typed
     /// error before buffering the file rather than uploading and eating a 413.
-    static let maxUploadBytes = 10 * 1024 * 1024
+    static let maxUploadBytes = 20 * 1024 * 1024
 
     let baseURL: URL
     let session: URLSession
@@ -19,11 +19,12 @@ public struct LiveConvertService: ConvertService {
 
     /// A backend convert can take ~70s, which blows past `URLSession.shared`'s
     /// 60s default request timeout (it throws `NSURLErrorTimedOut`, surfaced as
-    /// `ConvertServiceError.network`). Use a dedicated session with a 120s
+    /// `ConvertServiceError.network`). Use a dedicated session with a 240s
     /// request timeout to leave headroom.
     public static let convertSession: URLSession = {
         let config = URLSessionConfiguration.default
-        config.timeoutIntervalForRequest = 120
+        // PROVISIONAL — a 3-min clip processes ~3× longer than the ~70s cited above; refine from a real latency measurement.
+        config.timeoutIntervalForRequest = 240
         return URLSession(configuration: config)
     }()
 
