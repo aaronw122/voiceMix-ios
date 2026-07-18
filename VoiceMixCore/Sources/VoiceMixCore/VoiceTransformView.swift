@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import SwiftUI
 import AVFoundation
 import os
@@ -436,16 +437,10 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private func prepareClip(from recordedURL: URL) async throws -> PreparedClip {
         let t0 = Date()
-        let response = try await service.convert(audioURL: recordedURL,
-                                                 voiceId: selectedPersona.voiceId,
-                                                 engine: selectedPersona.engine)
-        let tConvert = Date()
-        try Task.checkCancellation()
-        guard let audioUrl = URL(string: response.audioUrl) else {
-            throw ConvertServiceError.invalidAudioURL
-        }
-        let convertedAudioURL = try await service.fetchAudio(audioUrl)
-        let tFetch = Date()
+        let convertedAudioURL = try await service.convert(audioURL: recordedURL,
+                                                          voiceId: selectedPersona.voiceId,
+                                                          engine: selectedPersona.engine)
+        let tAudio = Date()
         try Task.checkCancellation()
         let renderer = WaveformVideoRenderer()
         await updatePreviewWaveform(using: renderer, audioURL: convertedAudioURL)
@@ -457,9 +452,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         let ms = { (a: Date, b: Date) in Int(b.timeIntervalSince(a) * 1000) }
         log.info("""
         TIMING engine=\(self.selectedPersona.engine.rawValue, privacy: .public) \
-        convert=\(ms(t0, tConvert), privacy: .public)ms \
-        fetch=\(ms(tConvert, tFetch), privacy: .public)ms \
-        waveform=\(ms(tFetch, tWave), privacy: .public)ms \
+        uploadDownload=\(ms(t0, tAudio), privacy: .public)ms \
+        waveform=\(ms(tAudio, tWave), privacy: .public)ms \
         mp4=\(ms(tWave, tVideo), privacy: .public)ms \
         total=\(ms(t0, tVideo), privacy: .public)ms
         """)
@@ -1233,3 +1227,4 @@ private extension Color {
             .clipShape(RoundedRectangle(cornerRadius: 12))
     }
 }
+#endif

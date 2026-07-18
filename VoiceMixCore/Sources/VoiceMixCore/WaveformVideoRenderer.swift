@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import Foundation
 import AVFoundation
 import VideoToolbox
@@ -692,3 +693,4 @@ struct WaveformVideoRenderer {
         return dir.appendingPathComponent("\(suffix)-\(UUID().uuidString).\(ext)")
     }
 }
+#endif

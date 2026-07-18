@@ -1,14 +1,5 @@
+#if canImport(UIKit)
 import SwiftUI
-
-/// Which backend engine (and therefore which endpoint) a voice routes to.
-///
-/// The backend rejects the wrong pairing with a 422, so this is load-bearing,
-/// not cosmetic: `.elevenlabs` voices go to `POST /convert`, `.modal` voices
-/// go to `POST /impersonate`.
-public enum VoiceEngine: String, Equatable {
-    case elevenlabs
-    case modal
-}
 
 /// A selectable voice tile.
 ///
@@ -116,3 +107,4 @@ extension UIColor {
                   alpha: 1)
     }
 }
+#endif

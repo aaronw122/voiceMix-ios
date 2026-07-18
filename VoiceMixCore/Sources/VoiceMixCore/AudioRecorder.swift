@@ -1,3 +1,4 @@
+#if canImport(UIKit)
 import Foundation
 import AVFoundation
 
@@ -145,3 +146,4 @@ public final class AudioRecorder: NSObject {
 }
 
 extension AudioRecorder: AVAudioRecorderDelegate {}
+#endif
