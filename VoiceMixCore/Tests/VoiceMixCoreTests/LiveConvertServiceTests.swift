@@ -35,6 +35,54 @@ final class LiveConvertServiceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: audioURL), expectedAudio)
     }
 
+    func testConvert503SurfacesBusyWithParsedRetryAfter() async throws {
+        URLProtocolStub.requestHandler = { request in
+            try Self.response(
+                for: request,
+                statusCode: 503,
+                headers: ["Content-Type": "application/json", "Retry-After": "42"],
+                data: Data(#"{"error":"busy"}"#.utf8)
+            )
+        }
+
+        let service = makeService()
+        let uploadURL = try makeUploadFile()
+        defer { try? FileManager.default.removeItem(at: uploadURL) }
+
+        do {
+            _ = try await service.convert(audioURL: uploadURL, voiceId: "el-prez", engine: .modal)
+            XCTFail("Expected busy")
+        } catch let ConvertServiceError.busy(retryAfter) {
+            XCTAssertEqual(retryAfter, 42)
+        } catch {
+            XCTFail("Expected busy, got \(error)")
+        }
+    }
+
+    func testConvert503WithoutRetryAfterFallsBackToDefaultETA() async throws {
+        URLProtocolStub.requestHandler = { request in
+            try Self.response(
+                for: request,
+                statusCode: 503,
+                headers: ["Content-Type": "application/json"],
+                data: Data(#"{"error":"busy"}"#.utf8)
+            )
+        }
+
+        let service = makeService()
+        let uploadURL = try makeUploadFile()
+        defer { try? FileManager.default.removeItem(at: uploadURL) }
+
+        do {
+            _ = try await service.convert(audioURL: uploadURL, voiceId: "el-prez", engine: .modal)
+            XCTFail("Expected busy")
+        } catch let ConvertServiceError.busy(retryAfter) {
+            XCTAssertEqual(retryAfter, QueuedRetryPolicy.fallbackETASeconds)
+        } catch {
+            XCTFail("Expected busy, got \(error)")
+        }
+    }
+
     func testConvertThrowsHTTPStatusForJSONErrorWithoutWritingFile() async throws {
         let errorBody = Data(#"{"error":"unknown voice"}"#.utf8)
         URLProtocolStub.requestHandler = { request in
@@ -133,11 +181,20 @@ final class LiveConvertServiceTests: XCTestCase {
         contentType: String,
         data: Data
     ) throws -> (HTTPURLResponse, Data) {
+        try response(for: request, statusCode: statusCode, headers: ["Content-Type": contentType], data: data)
+    }
+
+    private static func response(
+        for request: URLRequest,
+        statusCode: Int,
+        headers: [String: String],
+        data: Data
+    ) throws -> (HTTPURLResponse, Data) {
         let response = try XCTUnwrap(HTTPURLResponse(
             url: try XCTUnwrap(request.url),
             statusCode: statusCode,
             httpVersion: nil,
-            headerFields: ["Content-Type": contentType]
+            headerFields: headers
         ))
         return (response, data)
     }

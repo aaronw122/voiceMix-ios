@@ -9,6 +9,9 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         case persona
         case record
         case transforming
+        /// Sub-state of the processing screen: the GPU was busy (503), so we sit
+        /// on a live countdown and auto-resubmit instead of returning to record.
+        case queued
         case review
     }
 
@@ -49,6 +52,17 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private var resumeOnActivate = false
     private var statusIndex = 0
 
+    // MARK: Queued auto-retry state (in-memory only — suspended scope)
+    /// The take being auto-resubmitted while queued.
+    private var queuedRecordedURL: URL?
+    /// Wall-clock deadline (anchor + eta + jitter) the countdown resubmits at.
+    private var queuedDeadline: Date?
+    /// Budget anchor: set on FIRST entering `queued`, drives the 4-minute ceiling.
+    private var firstQueuedAt: Date?
+    /// Count of fresh 503s seen while queued; drives the 4-attempt ceiling.
+    private var queuedAttempts = 0
+    private var queuedTimer: Timer?
+
     private let transformStatuses = [
         "Uploading your voice…",
         "Applying voice model…",
@@ -64,6 +78,11 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
                 self?.recordingReachedMaxDuration(recordedURL)
             }
         }
+        recorder.didInterruptRecording = { [weak self] recordedURL in
+            Task { @MainActor in
+                self?.recordingInterrupted(recordedURL)
+            }
+        }
     }
 
     deinit {
@@ -72,6 +91,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         levelTimer?.invalidate()
         statusTimer?.invalidate()
         playbackTimer?.invalidate()
+        queuedTimer?.invalidate()
         audioPlayer?.stop()
     }
 
@@ -94,11 +114,20 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
             return
         case .record:
             goBack()
+        case .queued:
+            // Collapse is a separate interruption vector: re-drive the countdown
+            // through the same resume routine as foreground (item 4).
+            resumeQueuedIfNeeded()
         }
     }
 
-    /// Auto-resume a conversion that background expiry cancelled while the user was away.
+    /// Re-drive work that a suspend froze. Queued countdowns/resubmits are re-armed
+    /// off the in-memory anchor; a background-expiry-cancelled convert is retried.
     public func handleDidBecomeActive() {
+        if step == .queued {
+            resumeQueuedIfNeeded()
+            return
+        }
         guard resumeOnActivate else { return }
         resumeOnActivate = false
         guard step == .record, let retryURL = lastRecordedURL else { return }
@@ -107,10 +136,12 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     }
 
     /// On resign (dim/lock/app-switch) never cancel an in-flight conversion. Don't
-    /// deactivate the session under an active recording — finalize the take instead.
+    /// deactivate the session under an active recording — an extension can't record
+    /// while suspended, so stop cleanly and KEEP the partial take (item 6) rather
+    /// than firing a doomed background convert.
     public func handleResignActivePreservingConversion() {
         if isRecording {
-            stopAndConvert(tail: false)  // finalize now — no time for a tail buffer before suspension
+            preserveInterruptedRecording(recorder.stopRecording())
         } else if isPlaying {
             stopPlayback()
         }
@@ -134,6 +165,8 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         case .transforming:
             cancelConversion()
             returnToRecordStep()
+        case .queued:
+            cancelQueued()  // keeps the take; re-sets lastRecordedURL after the reset above
         case .review:
             preparedClip = nil
             returnToRecordStep()
@@ -157,8 +190,10 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         if isRecording {
             stopAndConvert()
         } else if let retryURL = lastRecordedURL {
-            // Retry the previous recording after a transient failure.
+            // Manual retry after a transient failure (or budget-exhausted queue).
+            // A manual tap starts a fresh queue budget.
             lastRecordedURL = nil
+            tearDownQueued()
             startConversion(from: retryURL)
         } else {
             beginRecording()
@@ -169,6 +204,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         stopPlayback()
         preparedClip = nil
         lastRecordedURL = nil
+        tearDownQueued()
         step = .record
         statusLine = "Tap to record"
         seedWaveform()
@@ -239,6 +275,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
     private func beginRecording() {
         preparedClip = nil
+        tearDownQueued()  // a brand-new take starts a fresh queue budget
         stopPlayback()
 
         switch AudioRecorder.micPermission {
@@ -305,8 +342,11 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     /// rather than attempt a doomed upload + encode for an oversized take.
     private static let maxRecordingBytes = 10 * 1024 * 1024
 
-    private func startConversion(from recordedURL: URL) {
+    /// `statusOverride`: a fixed status line (e.g. "Converting…" on a queued
+    /// resubmit) shown in place of the cycling transform statuses.
+    private func startConversion(from recordedURL: URL, statusOverride: String? = nil) {
         stopRecordingTimers()
+        stopQueuedCountdown()  // leaving the countdown; keep the budget counters
         isRecording = false
         resumeOnActivate = false
 
@@ -320,8 +360,12 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
 
         step = .transforming
         statusIndex = 0
-        statusLine = transformStatuses[0]
-        startStatusTimer()
+        if let statusOverride {
+            statusLine = statusOverride
+        } else {
+            statusLine = transformStatuses[0]
+            startStatusTimer()
+        }
 
         let token = UUID()
         conversionToken = token
@@ -403,6 +447,12 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     /// clip so the user can retry by tapping record again, rather than being
     /// dropped silently back to an empty record screen.
     private func handleConversionFailure(_ error: Error, recordedURL: URL) {
+        // 503 busy → enter the queued auto-retry state instead of dead-ending.
+        if case let ConvertServiceError.busy(retryAfter) = error {
+            enterQueued(retryAfter: retryAfter, recordedURL: recordedURL)
+            return
+        }
+
         let transient: Bool
         switch error {
         case ConvertServiceError.httpStatus(404, _):
@@ -413,8 +463,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
              ConvertServiceError.fileTooLarge:
             statusLine = "Recording too long or large"
             transient = false
-        case ConvertServiceError.httpStatus(502, _),
-             ConvertServiceError.httpStatus(503, _):
+        case ConvertServiceError.httpStatus(502, _):
             statusLine = "Voice engine busy — tap to retry"
             transient = true
         case ConvertServiceError.network:
@@ -432,6 +481,129 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         // The persona is never reset here. On transient failures we keep the
         // last recording around so a retry doesn't require re-recording.
         lastRecordedURL = transient ? recordedURL : nil
+        step = .record
+    }
+
+    // MARK: - Queued auto-retry (503 busy)
+
+    /// Enter (or refresh) the queued state after a 503. Anchors the budget on the
+    /// first entry, counts the attempt, and either gives up or starts a countdown.
+    private func enterQueued(retryAfter: Int, recordedURL: URL) {
+        queuedRecordedURL = recordedURL
+        let now = Date()
+        if firstQueuedAt == nil { firstQueuedAt = now }
+        queuedAttempts += 1
+        if QueuedRetryPolicy.shouldGiveUp(attempts: queuedAttempts,
+                                          firstQueuedAt: firstQueuedAt!,
+                                          now: now) {
+            returnToRecordKeepingTake()
+            return
+        }
+        startQueuedCountdown(eta: retryAfter, now: now)
+    }
+
+    private func startQueuedCountdown(eta: Int, now: Date = Date()) {
+        let jitter = Double.random(in: 0...QueuedRetryPolicy.maxJitterSeconds)
+        queuedDeadline = QueuedRetryPolicy.deadline(anchor: now, eta: eta, jitter: jitter)
+        step = .queued
+        armQueuedCountdown()
+    }
+
+    /// (Re)arm the 1s display/resubmit timer. Also runs one tick immediately so a
+    /// resume where the deadline already passed resubmits without waiting a second.
+    private func armQueuedCountdown() {
+        queuedTimer?.invalidate()
+        queuedTimer = nil
+        if evaluateQueuedTick() { return }  // terminated (resubmit / give-up)
+        queuedTimer = scheduledMainActorTimer(interval: 1.0) { model in
+            _ = model.evaluateQueuedTick()
+        }
+    }
+
+    /// One countdown evaluation. Returns true if the countdown ended (resubmit or
+    /// give-up), false if it refreshed the display and should keep ticking.
+    @discardableResult
+    private func evaluateQueuedTick() -> Bool {
+        guard step == .queued, let deadline = queuedDeadline, let firstQueuedAt else { return true }
+        if QueuedRetryPolicy.budgetExhausted(firstQueuedAt: firstQueuedAt) {
+            returnToRecordKeepingTake()
+            return true
+        }
+        let remaining = QueuedRetryPolicy.remaining(deadline: deadline)
+        if remaining <= 0 {
+            resubmitQueued()
+            return true
+        }
+        statusLine = "Queued — about \(QueuedRetryPolicy.displaySeconds(remaining: remaining))s"
+        return false
+    }
+
+    /// Countdown expired: resubmit the kept take. A fresh 503 re-enters `queued`
+    /// (via `handleConversionFailure`) and increments attempts.
+    private func resubmitQueued() {
+        guard let url = queuedRecordedURL else {
+            returnToRecordKeepingTake()
+            return
+        }
+        stopQueuedCountdown()
+        startConversion(from: url, statusOverride: "Converting…")
+    }
+
+    /// Shared foreground/collapse resume path: re-arm the frozen countdown off the
+    /// in-memory anchor (recomputes remaining; resubmits immediately if overdue).
+    private func resumeQueuedIfNeeded() {
+        guard step == .queued else { return }
+        armQueuedCountdown()
+    }
+
+    /// User-tapped Cancel on the queued screen (item 7): stop the pending resubmit,
+    /// invalidate the token, and return to record with the take kept.
+    func cancelQueued() {
+        returnToRecordKeepingTake()
+    }
+
+    /// Land back on the record screen keeping the take for a manual convert. Used by
+    /// the budget/attempt fallback (item 3) and Cancel (item 7) — one neutral copy.
+    private func returnToRecordKeepingTake() {
+        let url = queuedRecordedURL
+        tearDownQueued()
+        lastRecordedURL = url
+        statusLine = "Ready — tap to convert"
+        step = .record
+    }
+
+    /// Invalidate the countdown timer/deadline (leaves budget counters).
+    private func stopQueuedCountdown() {
+        queuedTimer?.invalidate()
+        queuedTimer = nil
+        queuedDeadline = nil
+    }
+
+    /// Full reset of queued state, including the budget anchor and the kept take.
+    private func tearDownQueued() {
+        stopQueuedCountdown()
+        firstQueuedAt = nil
+        queuedAttempts = 0
+        queuedRecordedURL = nil
+    }
+
+    // MARK: - Recording interruption (item 6)
+
+    /// An `AVAudioSession` interruption stopped capture (lock/background). Keep the
+    /// partial take on the record screen so the user can continue or re-record.
+    private func recordingInterrupted(_ recordedURL: URL?) {
+        preserveInterruptedRecording(recordedURL)
+    }
+
+    private func preserveInterruptedRecording(_ recordedURL: URL?) {
+        stopRecordingTimers()
+        isRecording = false
+        if let recordedURL {
+            lastRecordedURL = recordedURL
+            statusLine = "Ready — tap to convert"
+        } else {
+            statusLine = "Tap to record"
+        }
         step = .record
     }
 
@@ -475,6 +647,7 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         conversionToken = nil
         resumeOnActivate = false
         stopStatusTimer()
+        tearDownQueued()
     }
 
     private func scheduledMainActorTimer(interval: TimeInterval,
@@ -626,7 +799,7 @@ public struct VoiceTransformView: View {
     private var pageIndex: Int {
         switch model.step {
         case .persona: return 0
-        case .record, .transforming: return 1
+        case .record, .transforming, .queued: return 1
         case .review: return 2
         }
     }
@@ -636,7 +809,7 @@ public struct VoiceTransformView: View {
         switch model.step {
         case .persona:
             personaPage
-        case .record, .transforming:
+        case .record, .transforming, .queued:
             recordPage
         case .review:
             reviewPage
@@ -648,6 +821,7 @@ public struct VoiceTransformView: View {
         case .persona: return "Choose a Voice"
         case .record: return model.selectedPersona.name
         case .transforming: return "Transforming"
+        case .queued: return "Queued"
         case .review: return "Preview"
         }
     }
@@ -682,6 +856,11 @@ public struct VoiceTransformView: View {
                     .font(.system(size: 17))
             }
             .foregroundStyle(Color(hex: 0x0A84FF))
+        case .queued:
+            // Escape hatch so the countdown never pins the user (item 7).
+            Button("Cancel") { model.cancelQueued() }
+                .font(.system(size: 17))
+                .foregroundStyle(Color(hex: 0x0A84FF))
         case .transforming:
             EmptyView()
         }
@@ -699,7 +878,7 @@ public struct VoiceTransformView: View {
                 .disabled(model.isSending)
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(model.isSending ? .white.opacity(0.28) : Color(hex: 0x0A84FF))
-        case .record, .transforming:
+        case .record, .transforming, .queued:
             EmptyView()
         }
     }
@@ -880,7 +1059,7 @@ public struct VoiceTransformView: View {
     }
 
     private var recordWaveformMode: NeonWaveformView.Mode {
-        if model.step == .transforming { return .transforming }
+        if model.step == .transforming || model.step == .queued { return .transforming }
         if model.isRecording { return .recording }
         return .ready
     }
@@ -896,7 +1075,7 @@ public struct VoiceTransformView: View {
                         .font(.system(size: 19, weight: .semibold, design: .default).monospacedDigit())
                 }
                 .foregroundStyle(.white)
-            } else if model.step == .transforming {
+            } else if model.step == .transforming || model.step == .queued {
                 Text(model.statusLine)
                     .font(.system(size: 14.5, weight: .medium))
                     .foregroundStyle(.white.opacity(0.70))
@@ -910,7 +1089,7 @@ public struct VoiceTransformView: View {
 
     @ViewBuilder
     private var recordControl: some View {
-        if model.step == .transforming {
+        if model.step == .transforming || model.step == .queued {
             transformingControl
         } else if model.isRecording {
             stopRecordingButton
