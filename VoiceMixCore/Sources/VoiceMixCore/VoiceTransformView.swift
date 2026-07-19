@@ -61,8 +61,6 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private var firstQueuedAt: Date?
     /// Count of fresh 503s seen while queued; drives the 4-attempt ceiling.
     private var queuedAttempts = 0
-    /// Identity of the pending resubmit; a stale timer/resume checks it and no-ops.
-    private var queuedToken: UUID?
     private var queuedTimer: Timer?
 
     private let transformStatuses = [
@@ -507,7 +505,6 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
     private func startQueuedCountdown(eta: Int, now: Date = Date()) {
         let jitter = Double.random(in: 0...QueuedRetryPolicy.maxJitterSeconds)
         queuedDeadline = QueuedRetryPolicy.deadline(anchor: now, eta: eta, jitter: jitter)
-        queuedToken = UUID()
         step = .queued
         armQueuedCountdown()
     }
@@ -575,12 +572,11 @@ public final class VoiceTransformViewModel: NSObject, ObservableObject {
         step = .record
     }
 
-    /// Invalidate the countdown timer/token/deadline (leaves budget counters).
+    /// Invalidate the countdown timer/deadline (leaves budget counters).
     private func stopQueuedCountdown() {
         queuedTimer?.invalidate()
         queuedTimer = nil
         queuedDeadline = nil
-        queuedToken = nil
     }
 
     /// Full reset of queued state, including the budget anchor and the kept take.

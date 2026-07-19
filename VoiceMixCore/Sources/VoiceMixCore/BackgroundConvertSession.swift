@@ -28,6 +28,7 @@ final class BackgroundConvertSession: NSObject {
     private struct Pending {
         var data = Data()
         var response: URLResponse?
+        let bodyFile: URL
         let continuation: CheckedContinuation<(Data, URLResponse), Error>
     }
 
@@ -44,7 +45,7 @@ final class BackgroundConvertSession: NSObject {
         return try await withCheckedThrowingContinuation { continuation in
             let task = session.uploadTask(with: request, fromFile: bodyFile)
             lock.lock()
-            pending[task.taskIdentifier] = Pending(continuation: continuation)
+            pending[task.taskIdentifier] = Pending(bodyFile: bodyFile, continuation: continuation)
             lock.unlock()
             task.resume()
         }
@@ -73,6 +74,8 @@ extension BackgroundConvertSession: URLSessionDataDelegate {
         let entry = pending.removeValue(forKey: task.taskIdentifier)
         lock.unlock()
         guard let entry else { return }
+
+        try? FileManager.default.removeItem(at: entry.bodyFile)  // staged upload body, no longer needed
 
         if let error {
             entry.continuation.resume(throwing: error)
