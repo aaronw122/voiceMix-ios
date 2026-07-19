@@ -27,6 +27,9 @@ enum ConvertServiceError: Error {
     case fileTooLarge(bytes: Int)
     /// Non-2xx HTTP response. `body` carries the (truncated) server message.
     case httpStatus(Int, body: String?)
+    /// 503 admission rejection. `retryAfter` is the server's integer-seconds
+    /// `Retry-After` ETA (or a fallback) that drives the queued countdown.
+    case busy(retryAfter: Int)
     /// A successful response did not contain the negotiated MP3 payload.
     case unexpectedContentType(String?)
     /// Transport-level failure: offline, timeout, DNS, TLS, etc.
