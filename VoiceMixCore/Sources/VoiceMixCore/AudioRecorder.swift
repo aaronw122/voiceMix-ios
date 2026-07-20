@@ -6,7 +6,16 @@ import AVFoundation
 /// Configures and activates the audio session before recording — the default
 /// iOS session permits playback but not recording.
 public final class AudioRecorder: NSObject {
-    public override init() { super.init() }
+    public override init() {
+        super.init()
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleSessionInterruption(_:)),
+            name: AVAudioSession.interruptionNotification,
+            object: nil)
+    }
+
+    deinit { NotificationCenter.default.removeObserver(self) }
 
     static let maxDurationSeconds: TimeInterval = 180
 
@@ -14,8 +23,15 @@ public final class AudioRecorder: NSObject {
     private var maxDurationTimer: Timer?
     /// Start time — wall-clock backstop for the cap if the run-loop timer fires late.
     private var recordingStartedAt: Date?
+    /// Our own capture-intent flag: `recorder.isRecording` can already read false
+    /// by the time an interruption `.began` arrives, so we track intent separately.
+    private var isCapturing = false
     private(set) var fileURL: URL?
     var didReachMaxDuration: ((URL?) -> Void)?
+    /// An `AVAudioSession` interruption (`.began`, e.g. screen lock — an extension
+    /// has no background-audio entitlement) stopped capture. Carries the partial
+    /// take's file URL so the caller can preserve it on the record screen.
+    var didInterruptRecording: ((URL?) -> Void)?
 
     var isRecording: Bool { recorder?.isRecording ?? false }
 
@@ -45,6 +61,7 @@ public final class AudioRecorder: NSObject {
         self.recorder = recorder
         self.fileURL = url
         self.recordingStartedAt = Date()
+        self.isCapturing = true
         scheduleMaxDurationTimer()
     }
 
@@ -73,12 +90,25 @@ public final class AudioRecorder: NSObject {
         maxDurationTimer?.invalidate()
         maxDurationTimer = nil
         recordingStartedAt = nil
+        isCapturing = false
         recorder?.stop()
         let url = fileURL
         recorder = nil
         // Release the session so other audio (playback bubble) behaves nicely.
         try? AVAudioSession.sharedInstance().setActive(false, options: [.notifyOthersOnDeactivation])
         return url
+    }
+
+    /// iOS interrupts an extension's `.playAndRecord` session on lock/background
+    /// (no background-audio entitlement). On `.began`, stop cleanly and keep the
+    /// partial take — its temp file is flushed and survives the suspension — then
+    /// hand the URL back so the caller can restore it on the record screen.
+    @objc private func handleSessionInterruption(_ note: Notification) {
+        guard isCapturing,
+              let raw = note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt,
+              AVAudioSession.InterruptionType(rawValue: raw) == .began else { return }
+        let url = stopRecording()
+        didInterruptRecording?(url)
     }
 
     /// Whether the active recording has run past the cap by wall-clock time.

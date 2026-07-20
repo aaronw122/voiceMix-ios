@@ -91,6 +91,12 @@ public struct LiveConvertService: ConvertService {
 
     private func performUpload(_ request: URLRequest, body: Data) async throws -> (Data, URLResponse) {
         do {
+            // Item 5 (UNVERIFIED, default OFF): route through the background
+            // session so a suspend carries the transfer to completion. Falls back
+            // to the default session — and thus the item-4 resubmit — when off.
+            if Config.useBackgroundConvertSession {
+                return try await BackgroundConvertSession.shared.upload(request, from: body)
+            }
             return try await session.upload(for: request, from: body)
         } catch {
             log.error("UPLOAD: transport failure \(error.localizedDescription)")
@@ -109,6 +115,16 @@ public struct LiveConvertService: ConvertService {
         }
         guard (200..<300).contains(http.statusCode) else {
             let bodyText = String(data: data.prefix(512), encoding: .utf8)
+            // 503 = GPU busy / admission rejected. Parse the dynamic Retry-After
+            // ETA (integer seconds per the backend contract) and surface it as a
+            // dedicated `.busy` so the view model can queue rather than fail.
+            if http.statusCode == 503 {
+                let retryAfter = QueuedRetryPolicy
+                    .parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After"))
+                    ?? QueuedRetryPolicy.fallbackETASeconds
+                log.error("UPLOAD: HTTP 503 busy retryAfter=\(retryAfter) engine=\(engine.rawValue) voiceId=\(voiceId)")
+                throw ConvertServiceError.busy(retryAfter: retryAfter)
+            }
             log.error("UPLOAD: HTTP \(http.statusCode) engine=\(engine.rawValue) voiceId=\(voiceId) body=\(bodyText ?? "<none>")")
             throw ConvertServiceError.httpStatus(http.statusCode, body: bodyText)
         }
