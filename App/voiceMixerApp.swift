@@ -46,7 +46,7 @@ struct OnboardingView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 32) {
+            VStack(spacing: 24) {
                 VStack(spacing: 12) {
                     Image(systemName: "waveform")
                         .font(.system(size: 56, weight: .semibold))
@@ -58,9 +58,9 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                .padding(.top, 48)
+                .padding(.top, 16)
 
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 20) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                         OnboardingRow(number: index + 1, step: step)
                     }
@@ -83,7 +83,7 @@ struct OnboardingView: View {
                 }
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
-                .padding(.bottom, 40)
+                .padding(.bottom, 24)
             }
             .frame(maxWidth: .infinity)
         }
