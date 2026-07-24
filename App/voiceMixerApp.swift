@@ -13,6 +13,9 @@ struct VoiceMixerApp: App {
 struct OnboardingView: View {
     @State private var micPermission = MicPermissionStatus.current
 
+    /// App Review 5.1.1(i) requires the policy be reachable in-app, not just on the product page.
+    private let privacyPolicyURL = URL(string: "https://awill.co/voicemix/privacy")!
+
     private let steps: [OnboardingStep] = [
         OnboardingStep(
             symbol: "message.fill",
@@ -70,10 +73,17 @@ struct OnboardingView: View {
                 )
                 .padding(.horizontal, 28)
 
-                Text("Once microphone is enabled, record and send from Messages.")
-                    .font(.footnote)
-                    .foregroundStyle(.secondary)
-                    .padding(.bottom, 40)
+                VStack(spacing: 12) {
+                    Text("Once microphone is enabled, record and send from Messages.")
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+
+                    Link("Privacy Policy", destination: privacyPolicyURL)
+                        .font(.footnote)
+                }
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 28)
+                .padding(.bottom, 40)
             }
             .frame(maxWidth: .infinity)
         }
