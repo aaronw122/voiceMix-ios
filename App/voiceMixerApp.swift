@@ -14,7 +14,7 @@ struct OnboardingView: View {
     @State private var micPermission = MicPermissionStatus.current
 
     /// App Review 5.1.1(i) requires the policy be reachable in-app, not just on the product page.
-    private let privacyPolicyURL = URL(string: "https://awill.co/voicemix/privacy")!
+    private let privacyPolicyURL = URL(string: "https://voiceapi.awill.co/privacy")!
 
     private let steps: [OnboardingStep] = [
         OnboardingStep(
