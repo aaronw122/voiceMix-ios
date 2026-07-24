@@ -74,9 +74,11 @@ struct OnboardingView: View {
                 .padding(.horizontal, 28)
 
                 VStack(spacing: 12) {
-                    Text("Once microphone is enabled, record and send from Messages.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if micPermission != .granted {
+                        Text("Once microphone is enabled, record and send from Messages.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Link("Privacy Policy", destination: privacyPolicyURL)
                         .font(.footnote)
