@@ -13,6 +13,7 @@
 		AA01000000000000000000B1 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA01000000000000000000A1 /* Assets.xcassets */; };
 		AA02000000000000000000B2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AA02000000000000000000A2 /* Assets.xcassets */; };
 		BB06000000000000000000B1 /* sample.mp3 in Resources */ = {isa = PBXBuildFile; fileRef = BB06000000000000000000A1 /* sample.mp3 */; };
+		CC07000000000000000000B1 /* PrivacyInfo.xcprivacy in Resources */ = {isa = PBXBuildFile; fileRef = CC07000000000000000000A1 /* PrivacyInfo.xcprivacy */; };
 		CC01000000000000000000B1 /* VoiceMixCore in Frameworks */ = {isa = PBXBuildFile; productRef = CC01000000000000000000C1 /* VoiceMixCore */; };
 		C24E0BEEC3C71A60E9E6D8B0 /* MessagesViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */; };
 /* End PBXBuildFile section */
@@ -59,6 +60,7 @@
 		AA01000000000000000000A1 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AA02000000000000000000A2 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		BB06000000000000000000A1 /* sample.mp3 */ = {isa = PBXFileReference; lastKnownFileType = audio.mp3; path = sample.mp3; sourceTree = "<group>"; };
+		CC07000000000000000000A1 /* PrivacyInfo.xcprivacy */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = PrivacyInfo.xcprivacy; sourceTree = "<group>"; };
 		D1EFA29EF7F844D5EDE2B0CD /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
 		E6C13A6C87CC73CD0FE5734E /* voiceMixerMessages.appex */ = {isa = PBXFileReference; explicitFileType = "wrapper.app-extension"; includeInIndex = 0; path = voiceMixerMessages.appex; sourceTree = BUILT_PRODUCTS_DIR; };
 		EE561D6569FFA338D5DC6BAF /* Base */ = {isa = PBXFileReference; lastKnownFileType = file.storyboard; name = Base; path = Base.lproj/MainInterface.storyboard; sourceTree = "<group>"; };
@@ -81,6 +83,7 @@
 				D1EFA29EF7F844D5EDE2B0CD /* Info.plist */,
 				0A2213F7439387F41E3B9E7A /* MessagesViewController.swift */,
 				BB06000000000000000000A1 /* sample.mp3 */,
+				CC07000000000000000000A1 /* PrivacyInfo.xcprivacy */,
 				00E96CFBA39EC3A302467EBE /* MainInterface.storyboard */,
 				AA02000000000000000000A2 /* Assets.xcassets */,
 			);
@@ -197,6 +200,7 @@
 				0C5C26600382474AA52DC4D6 /* MainInterface.storyboard in Resources */,
 				AA02000000000000000000B2 /* Assets.xcassets in Resources */,
 				BB06000000000000000000B1 /* sample.mp3 in Resources */,
+				CC07000000000000000000B1 /* PrivacyInfo.xcprivacy in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

@@ -35,6 +35,51 @@ final class LiveConvertServiceTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: audioURL), expectedAudio)
     }
 
+    func testConvertSendsStableDeviceIdAndFreshRequestIdPerAttempt() async throws {
+        var deviceIds: [String?] = []
+        var requestIds: [String?] = []
+        var appVersions: [String?] = []
+        URLProtocolStub.requestHandler = { request in
+            deviceIds.append(request.value(forHTTPHeaderField: "X-Device-Id"))
+            requestIds.append(request.value(forHTTPHeaderField: "X-Request-Id"))
+            appVersions.append(request.value(forHTTPHeaderField: "X-App-Version"))
+            return try Self.response(
+                for: request,
+                statusCode: 200,
+                contentType: "audio/mpeg",
+                data: Data([0x49, 0x44, 0x33])
+            )
+        }
+
+        let service = makeService()
+        let uploadURL = try makeUploadFile()
+        defer { try? FileManager.default.removeItem(at: uploadURL) }
+
+        for _ in 0..<2 {
+            let out = try await service.convert(audioURL: uploadURL, voiceId: "el-prez", engine: .modal)
+            try? FileManager.default.removeItem(at: out)
+        }
+
+        let sentDeviceIds = try deviceIds.map { try XCTUnwrap($0) }
+        XCTAssertEqual(Set(sentDeviceIds).count, 1)
+        XCTAssertNotNil(UUID(uuidString: try XCTUnwrap(sentDeviceIds.first)))
+
+        let sentRequestIds = try requestIds.map { try XCTUnwrap($0) }
+        XCTAssertEqual(Set(sentRequestIds).count, 2)
+        for id in sentRequestIds {
+            XCTAssertNotNil(UUID(uuidString: id))
+        }
+
+        // Equality (not just non-nil) so a dropped setValue fails whenever the bundle has a version.
+        for version in appVersions {
+            XCTAssertEqual(version, ClientTelemetry.appVersion)
+        }
+        for version in appVersions.compactMap({ $0 }) {
+            XCTAssertNotNil(version.range(of: #"^\d+\.\d+(\.\d+)?(-[0-9A-Za-z.]+)?$"#, options: .regularExpression),
+                            "app version \(version) would be dropped by the backend")
+        }
+    }
+
     func testConvert503SurfacesBusyWithParsedRetryAfter() async throws {
         URLProtocolStub.requestHandler = { request in
             try Self.response(

@@ -36,8 +36,9 @@ public struct LiveConvertService: ConvertService {
     public func convert(audioURL: URL, voiceId: String, engine: VoiceEngine) async throws -> URL {
         try validateUploadSize(of: audioURL)
 
+        let requestId = ClientTelemetry.newRequestId()
         let boundary = "Boundary-\(UUID().uuidString)"
-        let request = makeUploadRequest(for: engine, boundary: boundary)
+        let request = makeUploadRequest(for: engine, boundary: boundary, requestId: requestId)
 
         let audioData = try Data(contentsOf: audioURL)
         let body = Self.multipartBody(
@@ -46,8 +47,9 @@ public struct LiveConvertService: ConvertService {
             audioData: audioData
         )
 
-        let (data, response) = try await performUpload(request, body: body)
-        let payload = try validatedPayload(data, response, engine: engine, voiceId: voiceId)
+        let (data, response) = try await performUpload(request, body: body, requestId: requestId)
+        let payload = try validatedPayload(data, response, engine: engine, voiceId: voiceId,
+                                           requestId: requestId)
         let contentType = (response as? HTTPURLResponse)?.value(forHTTPHeaderField: "Content-Type")
         let mediaType = contentType?
             .split(separator: ";", maxSplits: 1)
@@ -81,15 +83,24 @@ public struct LiveConvertService: ConvertService {
         }
     }
 
-    private func makeUploadRequest(for engine: VoiceEngine, boundary: String) -> URLRequest {
+    private func makeUploadRequest(for engine: VoiceEngine,
+                                   boundary: String,
+                                   requestId: String) -> URLRequest {
         var request = URLRequest(url: endpoint(for: engine))
         request.httpMethod = "POST"
         request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
         request.setValue("audio/mpeg", forHTTPHeaderField: "Accept")
+        request.setValue(requestId, forHTTPHeaderField: "X-Request-Id")
+        request.setValue(ClientTelemetry.installId, forHTTPHeaderField: "X-Device-Id")
+        if let appVersion = ClientTelemetry.appVersion {
+            request.setValue(appVersion, forHTTPHeaderField: "X-App-Version")
+        }
         return request
     }
 
-    private func performUpload(_ request: URLRequest, body: Data) async throws -> (Data, URLResponse) {
+    private func performUpload(_ request: URLRequest,
+                               body: Data,
+                               requestId: String) async throws -> (Data, URLResponse) {
         do {
             // Item 5 (UNVERIFIED, default OFF): route through the background
             // session so a suspend carries the transfer to completion. Falls back
@@ -99,7 +110,8 @@ public struct LiveConvertService: ConvertService {
             }
             return try await session.upload(for: request, from: body)
         } catch {
-            log.error("UPLOAD: transport failure \(error.localizedDescription)")
+            // `.public` or os_log redacts the id as <private>, making it useless in Console.
+            log.error("UPLOAD: transport failure requestId=\(requestId, privacy: .public) \(error.localizedDescription)")
             throw ConvertServiceError.network(underlying: error)
         }
     }
@@ -108,7 +120,8 @@ public struct LiveConvertService: ConvertService {
         _ data: Data,
         _ response: URLResponse,
         engine: VoiceEngine,
-        voiceId: String
+        voiceId: String,
+        requestId: String
     ) throws -> Data {
         guard let http = response as? HTTPURLResponse else {
             throw ConvertServiceError.httpStatus(-1, body: nil)
@@ -122,10 +135,10 @@ public struct LiveConvertService: ConvertService {
                 let retryAfter = QueuedRetryPolicy
                     .parseRetryAfter(http.value(forHTTPHeaderField: "Retry-After"))
                     ?? QueuedRetryPolicy.fallbackETASeconds
-                log.error("UPLOAD: HTTP 503 busy retryAfter=\(retryAfter) engine=\(engine.rawValue) voiceId=\(voiceId)")
+                log.error("UPLOAD: HTTP 503 busy requestId=\(requestId, privacy: .public) retryAfter=\(retryAfter) engine=\(engine.rawValue) voiceId=\(voiceId)")
                 throw ConvertServiceError.busy(retryAfter: retryAfter)
             }
-            log.error("UPLOAD: HTTP \(http.statusCode) engine=\(engine.rawValue) voiceId=\(voiceId) body=\(bodyText ?? "<none>")")
+            log.error("UPLOAD: HTTP \(http.statusCode) requestId=\(requestId, privacy: .public) engine=\(engine.rawValue) voiceId=\(voiceId) body=\(bodyText ?? "<none>")")
             throw ConvertServiceError.httpStatus(http.statusCode, body: bodyText)
         }
         return data
