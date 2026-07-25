@@ -1,5 +1,6 @@
 import SwiftUI
 import AVFoundation
+import UIKit
 
 @main
 struct VoiceMixerApp: App {
@@ -232,8 +233,8 @@ private struct MicrophonePermissionRow: View {
             }
 
             // .denied can only be undone in Settings — the copy says so, so give them the door.
-            if status == .denied, let settings = URL(string: UIApplication.openSettingsURLString) {
-                Link("Open Settings", destination: settings)
+            if status == .denied {
+                Link("Open Settings", destination: URL(string: UIApplication.openSettingsURLString)!)
                     .buttonStyle(.borderedProminent)
             }
         }
