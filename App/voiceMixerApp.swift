@@ -59,6 +59,7 @@ struct OnboardingView: View {
                         .multilineTextAlignment(.center)
                 }
                 .padding(.top, 16)
+                .padding(.horizontal, 28)
 
                 VStack(alignment: .leading, spacing: 20) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
@@ -125,12 +126,16 @@ private struct OnboardingRow: View {
     let number: Int
     let step: OnboardingStep
 
+    /// Fixed-size badge clips its numeral at accessibility text sizes, and white-on-tint
+    /// becomes unreadable once it overflows — scale the circle with the label.
+    @ScaledMetric(relativeTo: .headline) private var badgeSize: CGFloat = 36
+
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
             ZStack {
                 Circle()
                     .fill(.tint)
-                    .frame(width: 36, height: 36)
+                    .frame(width: badgeSize, height: badgeSize)
                 Text("\(number)")
                     .font(.headline)
                     .foregroundStyle(.white)
@@ -223,6 +228,12 @@ private struct MicrophonePermissionRow: View {
 
             if status == .undetermined {
                 Button("Enable Microphone", action: enableAction)
+                    .buttonStyle(.borderedProminent)
+            }
+
+            // .denied can only be undone in Settings — the copy says so, so give them the door.
+            if status == .denied, let settings = URL(string: UIApplication.openSettingsURLString) {
+                Link("Open Settings", destination: settings)
                     .buttonStyle(.borderedProminent)
             }
         }
