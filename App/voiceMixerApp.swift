@@ -14,7 +14,7 @@ struct OnboardingView: View {
     @State private var micPermission = MicPermissionStatus.current
 
     /// App Review 5.1.1(i) requires the policy be reachable in-app, not just on the product page.
-    private let privacyPolicyURL = URL(string: "https://awill.co/voicemix/privacy")!
+    private let privacyPolicyURL = URL(string: "https://voiceapi.awill.co/privacy")!
 
     private let steps: [OnboardingStep] = [
         OnboardingStep(
@@ -46,7 +46,7 @@ struct OnboardingView: View {
 
     var body: some View {
         ScrollView {
-            VStack(spacing: 32) {
+            VStack(spacing: 24) {
                 VStack(spacing: 12) {
                     Image(systemName: "waveform")
                         .font(.system(size: 56, weight: .semibold))
@@ -58,9 +58,9 @@ struct OnboardingView: View {
                         .foregroundStyle(.secondary)
                         .multilineTextAlignment(.center)
                 }
-                .padding(.top, 48)
+                .padding(.top, 16)
 
-                VStack(alignment: .leading, spacing: 24) {
+                VStack(alignment: .leading, spacing: 20) {
                     ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
                         OnboardingRow(number: index + 1, step: step)
                     }
@@ -74,16 +74,18 @@ struct OnboardingView: View {
                 .padding(.horizontal, 28)
 
                 VStack(spacing: 12) {
-                    Text("Once microphone is enabled, record and send from Messages.")
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
+                    if micPermission != .granted {
+                        Text("Once microphone is enabled, record and send from Messages.")
+                            .font(.footnote)
+                            .foregroundStyle(.secondary)
+                    }
 
                     Link("Privacy Policy", destination: privacyPolicyURL)
                         .font(.footnote)
                 }
                 .multilineTextAlignment(.center)
                 .padding(.horizontal, 28)
-                .padding(.bottom, 40)
+                .padding(.bottom, 24)
             }
             .frame(maxWidth: .infinity)
         }
